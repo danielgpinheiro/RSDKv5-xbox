@@ -670,12 +670,12 @@ bool RenderDevice::SetupRendering()
     debugPrint("[SDL2] SetupRendering: entry\n");
 #endif
 #if RETRO_PLATFORM == RETRO_XBOX
-    VIDEO_MODE xmode = XVideoGetMode();
-    uint8 rendererFlag = 0;
-    if (xmode.width == 640)
-        rendererFlag |= SDL_RENDERER_PRESENTVSYNC;
-    debugPrint("[SDL2] SetupRendering: SDL_CreateRenderer flags=%d\n", rendererFlag);
-    renderer = SDL_CreateRenderer(window, -1, rendererFlag);
+    // pbkit GPU renderer crashes (pb_init conflicts with already-initialized display)
+    // Use software renderer instead — renders to CPU surface, blits via XVideoFlushFB
+    debugPrint("[SDL2] SetupRendering: using SDL_RENDERER_SOFTWARE, window=%p\n", (void*)window);
+    debugPrint("[SDL2] SetupRendering: about to call SDL_CreateRenderer...\n");
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    debugPrint("[SDL2] SetupRendering: SDL_CreateRenderer returned %p\n", (void*)renderer);
 #else
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 #endif
