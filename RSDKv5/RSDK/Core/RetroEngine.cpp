@@ -122,7 +122,7 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 #else
         if (RenderDevice::Init()) {
 #if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("[RSDK] RenderDevice::Init: OK, entering main loop\n");
+            debugPrint("R%d\n", sceneInfo.state);
 #endif
             RenderDevice::isRunning = true;
         }
@@ -141,12 +141,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
     RenderDevice::InitFPSCap();
 
     while (RenderDevice::isRunning) {
-#if RETRO_PLATFORM == RETRO_XBOX
-        static int32 loopTick = 0;
-        if (loopTick < 10) {
-            debugPrint("[RSDK] tick %d state=%d\n", loopTick++, sceneInfo.state);
-        }
-#endif
         RenderDevice::ProcessEvents();
 
         if (!RenderDevice::isRunning)
@@ -308,6 +302,9 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
                         case 3: Legacy::v3::ProcessEngine(); break;
                     }
 #else
+#if RETRO_PLATFORM == RETRO_XBOX
+                    { static int32 ft; if (ft < 5) { debugPrint("S%d\n", sceneInfo.state); ft++; } }
+#endif
                     ProcessEngine();
 #endif
                 }
