@@ -139,8 +139,10 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
     while (RenderDevice::isRunning) {
 #if RETRO_PLATFORM == RETRO_XBOX
         static int32 loopTick = 0;
-        if (loopTick < 3)
-            debugPrint("[RSDK] main loop tick %d\n", loopTick++);
+        if (loopTick < 10) {
+            debugPrint("[RSDK] tick %d state=%d listData=%p catCount=%d\n",
+                       loopTick++, sceneInfo.state, (void*)sceneInfo.listData, sceneInfo.categoryCount);
+        }
 #endif
         RenderDevice::ProcessEvents();
 
@@ -1234,7 +1236,16 @@ void RSDK::LoadGameConfig()
 #endif
 
         sceneInfo.listPos = sceneInfo.listCategory[sceneInfo.activeCategory].sceneOffsetStart + startScene;
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadGameConfig: complete, cat=%d listPos=%d catCount=%d\n",
+                   sceneInfo.activeCategory, sceneInfo.listPos, sceneInfo.categoryCount);
+#endif
     }
+#if RETRO_PLATFORM == RETRO_XBOX
+    else {
+        debugPrint("[RSDK] LoadGameConfig: LoadFile FAILED\n");
+    }
+#endif
 }
 
 void RSDK::InitGameLink()
