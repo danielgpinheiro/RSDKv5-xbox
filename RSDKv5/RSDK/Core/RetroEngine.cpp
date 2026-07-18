@@ -385,8 +385,8 @@ void RSDK::ProcessEngine()
 {
 #if RETRO_PLATFORM == RETRO_XBOX
     static int32 lastState = -1;
-    if (sceneInfo.state != lastState) {
-        debugPrint("[RSDK] ProcessEngine: state changed %d -> %d\n", lastState, sceneInfo.state);
+    if (sceneInfo.state != lastState)     {
+        debugPrint("P%d\n", sceneInfo.state);
         lastState = sceneInfo.state;
     }
 #endif

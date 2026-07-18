@@ -276,37 +276,27 @@ void RSDK::LoadSceneFolder()
         }
 
         uint8 sfxCount = ReadInt8(&info);
-#if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[RSDK] LoadSceneFolder: palettes done, sfxCount=%d\n", sfxCount);
-#endif
         char sfxPath[0x100];
         for (int32 i = 0; i < sfxCount; ++i) {
             ReadString(&info, sfxPath);
             uint8 maxConcurrentPlays = ReadInt8(&info);
-#if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("[RSDK] LoadSceneFolder: loading sfx[%d]=%s\n", i, sfxPath);
-#endif
             LoadSfx(sfxPath, maxConcurrentPlays, SCOPE_STAGE);
         }
 #if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[RSDK] LoadSceneFolder: sfx done, closing StageConfig\n");
+        debugPrint("[S] sfx\n");
 #endif
-
         CloseFile(&info);
     }
 #if RETRO_PLATFORM == RETRO_XBOX
     else {
-        debugPrint("[RSDK] LoadSceneFolder: StageConfig LoadFile FAILED\n");
+        debugPrint("[S] FAIL\n");
     }
 #endif
 
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Stages/%s/16x16Tiles.gif", currentSceneFolder);
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] LoadSceneFolder: loading %s\n", fullFilePath);
-#endif
     LoadStageGIF(fullFilePath);
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] LoadSceneFolder: done\n");
+    debugPrint("[S] gif\n");
 #endif
 
 #if RETRO_USE_MOD_LOADER
