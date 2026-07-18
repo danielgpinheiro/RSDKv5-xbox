@@ -19,6 +19,25 @@
 #define fWrite(buffer, elementSize, elementCount, file) fwrite(buffer, elementSize, elementCount, file)
 #endif
 
+#if RETRO_PLATFORM == RETRO_XBOX
+// Bypass SDL_RWops — NXDK's SDL2 port fails on repeated open/close of large files.
+// Use native C library file I/O (pdclib) instead.
+#undef FileIO
+#undef fOpen
+#undef fRead
+#undef fSeek
+#undef fTell
+#undef fClose
+#undef fWrite
+#define FileIO    FILE
+#define fOpen(path, mode)                               fopen(path, mode)
+#define fRead(buffer, elementSize, elementCount, file)  fread(buffer, elementSize, elementCount, file)
+#define fSeek(file, offset, whence)                     fseek(file, offset, whence)
+#define fTell(file)                                     ftell(file)
+#define fClose(file)                                    fclose(file)
+#define fWrite(buffer, elementSize, elementCount, file) fwrite(buffer, elementSize, elementCount, file)
+#endif
+
 #if RETRO_PLATFORM == RETRO_ANDROID
 #undef fOpen
 FileIO *fOpen(const char *path, const char *mode);
