@@ -23,6 +23,9 @@ bool RenderDevice::Init()
     const char *gameTitle = gameVerInfo.gameTitle;
 
     SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[SDL2] Init: SDL_InitSubSystem done\n");
+#endif
 
     uint8 flags = 0;
 
@@ -31,6 +34,7 @@ bool RenderDevice::Init()
     VIDEO_MODE xmode           = XVideoGetMode();
     videoSettings.windowWidth  = xmode.width;
     videoSettings.windowHeight = xmode.height;
+    debugPrint("[SDL2] Init: XVideoGetMode=%dx%d\n", xmode.width, xmode.height);
 #else
 
 #if RETRO_PLATFORM == RETRO_ANDROID
@@ -58,6 +62,7 @@ bool RenderDevice::Init()
 #if RETRO_PLATFORM == RETRO_XBOX
     window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, videoSettings.windowWidth,
                               videoSettings.windowHeight, SDL_WINDOW_SHOWN);
+    debugPrint("[SDL2] Init: SDL_CreateWindow done, window=%p\n", (void*)window);
 #else
     window = SDL_CreateWindow(gameTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, videoSettings.windowWidth, videoSettings.windowHeight,
                               SDL_WINDOW_ALLOW_HIGHDPI | flags);
@@ -83,9 +88,18 @@ bool RenderDevice::Init()
 #endif
 
     PrintLog(PRINT_NORMAL, "w: %d h: %d windowed: %d", videoSettings.windowWidth, videoSettings.windowHeight, videoSettings.windowed);
-
-    if (!SetupRendering() || !AudioDevice::Init())
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[SDL2] Init: calling SetupRendering...\n");
+#endif
+    if (!SetupRendering() || !AudioDevice::Init()) {
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[SDL2] Init: SetupRendering or AudioDevice::Init FAILED\n");
+#endif
         return false;
+    }
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[SDL2] Init: SetupRendering + Audio OK\n");
+#endif
 
     InitInputDevices();
     return true;
@@ -487,6 +501,9 @@ void RenderDevice::InitVertexBuffer()
 
 bool RenderDevice::InitGraphicsAPI()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[SDL2] InitGraphicsAPI: entry\n");
+#endif
     videoSettings.shaderSupport = false;
 
     viewSize.x = 0;
@@ -577,9 +594,15 @@ bool RenderDevice::InitGraphicsAPI()
 
         if (!screenTexture[s]) {
             PrintLog(PRINT_NORMAL, "ERROR: failed to create screen buffer!\nerror msg: %s", SDL_GetError());
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[SDL2] InitGraphicsAPI: screenTexture[%d] FAILED: %s\n", s, SDL_GetError());
+#endif
             return 0;
         }
     }
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[SDL2] InitGraphicsAPI: screen textures OK, texSize=%dx%d\n", (int)textureSize.x, (int)textureSize.y);
+#endif
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
     imageTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, RETRO_VIDEO_TEXTURE_W, RETRO_VIDEO_TEXTURE_H);
     if (!imageTexture)
@@ -594,6 +617,9 @@ bool RenderDevice::InitGraphicsAPI()
     videoSettings.viewportW = 1.0 / viewSize.x;
     videoSettings.viewportH = 1.0 / viewSize.y;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[SDL2] InitGraphicsAPI: done, viewSize=%dx%d\n", (int)viewSize.x, (int)viewSize.y);
+#endif
     return true;
 }
 
@@ -641,10 +667,14 @@ bool RenderDevice::InitShaders()
 bool RenderDevice::SetupRendering()
 {
 #if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[SDL2] SetupRendering: entry\n");
+#endif
+#if RETRO_PLATFORM == RETRO_XBOX
     VIDEO_MODE xmode = XVideoGetMode();
     uint8 rendererFlag = 0;
     if (xmode.width == 640)
         rendererFlag |= SDL_RENDERER_PRESENTVSYNC;
+    debugPrint("[SDL2] SetupRendering: SDL_CreateRenderer flags=%d\n", rendererFlag);
     renderer = SDL_CreateRenderer(window, -1, rendererFlag);
 #else
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
@@ -652,8 +682,14 @@ bool RenderDevice::SetupRendering()
 
     if (!renderer) {
         PrintLog(PRINT_NORMAL, "ERROR: failed to create renderer!");
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[SDL2] SetupRendering: SDL_CreateRenderer FAILED: %s\n", SDL_GetError());
+#endif
         return false;
     }
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[SDL2] SetupRendering: renderer created OK\n");
+#endif
 
     GetDisplays();
 

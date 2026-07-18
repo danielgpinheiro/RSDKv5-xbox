@@ -38,7 +38,13 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         debugPrint("[RSDK] InitStorage: OK\n");
 #endif
         SKU::InitUserCore();
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] InitUserCore: done, calling LoadSettingsINI\n");
+#endif
         LoadSettingsINI();
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSettingsINI: done, useDataPack=%d\n", useDataPack);
+#endif
 
 #if !RETRO_USE_ORIGINAL_CODE
         // temp fix till i properly figure out what exactly went wrong here
@@ -54,7 +60,13 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         // do it early so we can render funny little loading bar for mods
         int32 shader = videoSettings.shaderID;
         strcpy(gameVerInfo.gameTitle, "RSDK" ENGINE_V_NAME);
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] calling RenderDevice::Init...\n");
+#endif
         if (RenderDevice::Init()) {
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[RSDK] RenderDevice::Init: OK\n");
+#endif
             RenderDevice::isRunning   = true;
             currentScreen             = &screens[0];
             videoSettings.screenCount = 1;
@@ -658,6 +670,9 @@ void RSDK::InitEngine()
         case 5:
 #endif
             StartGameObjects();
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[RSDK] StartGameObjects done, about to InitGameLink\n");
+#endif
 #if RETRO_REV0U
             break;
 
@@ -1216,6 +1231,9 @@ void RSDK::LoadGameConfig()
 
 void RSDK::InitGameLink()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] InitGameLink: entry, useExternalCode=%d\n", engine.useExternalCode);
+#endif
 #if RETRO_USE_MOD_LOADER
     objectClassCount = 0;
     memset(globalObjectIDs, 0, sizeof(globalObjectIDs));
@@ -1344,8 +1362,14 @@ void RSDK::InitGameLink()
                 PrintLog(PRINT_NORMAL, "ERROR: Failed to link game logic!");
         }
         else {
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[RSDK] InitGameLink: calling linkGameLogic(&info) static path, linkGameLogic=%p\n", (void*)linkGameLogic);
+#endif
 #if RETRO_REV02
             linkGameLogic(&info);
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[RSDK] InitGameLink: linkGameLogic returned OK\n");
+#endif
 #else
         linkGameLogic(info);
 #endif
