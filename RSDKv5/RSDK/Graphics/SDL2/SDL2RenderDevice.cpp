@@ -138,85 +138,75 @@ void RenderDevice::FlipScreen()
 
     float dimAmount = videoSettings.dimMax * videoSettings.dimPercent;
 
+#if RETRO_PLATFORM != RETRO_XBOX
     // Clear the screen. This is needed to keep the
     // pillarboxes in fullscreen from displaying garbage data.
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF);
     SDL_RenderClear(renderer);
+#endif
 
 #if RETRO_PLATFORM == RETRO_XBOX
     {
-        // Direct framebuffer blit — no SDL renderer needed
-        debugPrint("[SDL2] FlipScreen: entry, dimAmount=%.2f\n", dimAmount);
-        SDL_Surface *surface = SDL_GetWindowSurface(window);
-        debugPrint("[SDL2] FlipScreen: surface=%p w=%d h=%d fmt=%d pitch=%d\n",
-                   (void*)surface, surface ? surface->w : 0, surface ? surface->h : 0,
-                   surface ? surface->format->format : 0, surface ? surface->pitch : 0);
-        if (surface) {
-            uint16 *fb   = screens[0].frameBuffer;
-            int32 srcW   = screens[0].size.x;
-            int32 srcH   = SCREEN_YSIZE;
-            int32 dstW   = surface->w;
-            int32 dstH   = surface->h;
-            int32 dstPitch = surface->pitch / sizeof(uint16);
+        // Direct framebuffer — bypass SDL surface, use XVideoGetFB
+        uint8_t *fbRaw = (uint8_t *)XVideoGetFB();
+        VIDEO_MODE xmode = XVideoGetMode();
 
-            // Center the game screen (letterbox/pillarbox)
-            int32 scaleX = dstW / srcW;
-            int32 scaleY = dstH / srcH;
-            int32 scale  = scaleX < scaleY ? scaleX : scaleY;
-            if (scale < 1) scale = 1;
-            int32 drawW  = srcW * scale;
-            int32 drawH  = srcH * scale;
-            int32 offX   = (dstW - drawW) / 2;
-            int32 offY   = (dstH - drawH) / 2;
+        if (!fbRaw)
+            return;
 
-            uint16 *dst = (uint16 *)surface->pixels;
-            // Fill with black (pillarbox/letterbox)
-            for (int32 y = 0; y < dstH; ++y) {
-                for (int32 x = 0; x < dstW; ++x)
-                    dst[x] = 0;
-                dst += dstPitch;
+        uint16 *src   = screens[0].frameBuffer;
+        int32 srcW    = screens[0].size.x;
+        int32 srcH    = SCREEN_YSIZE;
+        int32 fbW     = xmode.width;
+        int32 fbH     = xmode.height;
+        int32 fbPitch = xmode.width * 4;
+
+        int32 scale = (fbW / srcW) < (fbH / srcH) ? (fbW / srcW) : (fbH / srcH);
+        if (scale < 1) scale = 1;
+        int32 drawW = srcW * scale;
+        int32 drawH = srcH * scale;
+        int32 offX  = (fbW - drawW) / 2;
+        int32 offY  = (fbH - drawH) / 2;
+
+        // Fill black
+        for (int32 y = 0; y < fbH; y++) {
+            uint32 *row = (uint32 *)(fbRaw + y * fbPitch);
+            for (int32 x = 0; x < fbW; x++)
+                row[x] = 0xFF000000;
+        }
+
+        // Copy frame buffer (RGB565) → framebuffer (XRGB8888)
+        for (int32 y = 0; y < drawH; y++) {
+            int32 srcY       = y / scale;
+            uint32 *dstRow   = (uint32 *)(fbRaw + (offY + y) * fbPitch) + offX;
+            uint16 *srcRow   = src + srcY * screens[0].pitch;
+            for (int32 x = 0; x < drawW; x++) {
+                uint16 p   = srcRow[x / scale];
+                uint32 r   = ((p >> 11) & 0x1F) * 255 / 31;
+                uint32 g   = ((p >> 5) & 0x3F) * 255 / 63;
+                uint32 b   = (p & 0x1F) * 255 / 31;
+                dstRow[x]  = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
+        }
 
-            // Copy frame buffer to surface with integer scaling
-            dst = (uint16 *)surface->pixels;
-            for (int32 y = 0; y < drawH; ++y) {
-                int32 srcY = y / scale;
-                uint16 *dstRow = dst + ((offY + y) * dstPitch) + offX;
-                uint16 *srcRow = fb + (srcY * screens[0].pitch);
-                for (int32 x = 0; x < drawW; ++x)
-                    dstRow[x] = srcRow[x / scale];
-            }
-
-            // Apply dim
-            if (dimAmount < 1.0f) {
-#if RETRO_PLATFORM == RETRO_XBOX
-                debugPrint("[SDL2] FlipScreen: applying dimAmount=%.2f\n", dimAmount);
-#endif
-                dst = (uint16 *)surface->pixels;
-                for (int32 y = 0; y < dstH; ++y) {
-                    for (int32 x = 0; x < dstW; ++x) {
-                        uint16 p = dst[x];
-                        int32 r = (((p >> 11) & 0x1F) * dimAmount);
-                        int32 g = (((p >> 5) & 0x3F) * dimAmount);
-                        int32 b = ((p & 0x1F) * dimAmount);
-                        dst[x] = (r << 11) | (g << 5) | b;
-                    }
-                    dst += dstPitch;
+        // Apply dim
+        if (dimAmount < 1.0f) {
+            for (int32 y = 0; y < fbH; y++) {
+                uint32 *row = (uint32 *)(fbRaw + y * fbPitch);
+                for (int32 x = 0; x < fbW; x++) {
+                    uint32 p  = row[x];
+                    uint32 r  = ((p >> 16) & 0xFF) * dimAmount;
+                    uint32 g  = ((p >> 8) & 0xFF) * dimAmount;
+                    uint32 b  = (p & 0xFF) * dimAmount;
+                    row[x]    = 0xFF000000 | (r << 16) | (g << 8) | b;
                 }
             }
-
-#if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("[SDL2] FlipScreen: calling SDL_UpdateWindowSurface\n");
-#endif
-            SDL_UpdateWindowSurface(window);
-#if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("[SDL2] FlipScreen: done\n");
-#endif
         }
+
+        XVideoFlushFB();
     }
     return;
 #else
-
 #if (SDL_COMPILEDVERSION >= SDL_VERSIONNUM(2, 0, 18))
     int32 startVert = 0;
     switch (videoSettings.screenCount) {
