@@ -107,6 +107,9 @@ bool RenderDevice::Init()
 
 void RenderDevice::CopyFrameBuffer()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    return; // Direct framebuffer — no SDL textures, read screen[s].frameBuffer directly in FlipScreen
+#endif
     int32 pitch    = 0;
     uint16 *pixels = NULL;
 
@@ -142,26 +145,61 @@ void RenderDevice::FlipScreen()
 
 #if RETRO_PLATFORM == RETRO_XBOX
     {
-        VIDEO_MODE xmode = XVideoGetMode();
-        int widthXbox, heightXbox;
-        if (xmode.width == 1280) {
-            widthXbox  = 1280;
-            heightXbox = 720;
-        }
-        else {
-            widthXbox  = 848;
-            heightXbox = 480;
-        }
+        // Direct framebuffer blit — no SDL renderer needed
+        SDL_Surface *surface = SDL_GetWindowSurface(window);
+        if (surface) {
+            uint16 *fb   = screens[0].frameBuffer;
+            int32 srcW   = screens[0].size.x;
+            int32 srcH   = SCREEN_YSIZE;
+            int32 dstW   = surface->w;
+            int32 dstH   = surface->h;
+            int32 dstPitch = surface->pitch / sizeof(uint16);
 
-        SDL_Rect src = { 0, 0, (int)textureSize.x, (int)textureSize.y };
-        SDL_Rect dst = { 0, 0, widthXbox, heightXbox };
-        SDL_RenderCopy(renderer, screenTexture[0], &src, &dst);
+            // Center the game screen (letterbox/pillarbox)
+            int32 scaleX = dstW / srcW;
+            int32 scaleY = dstH / srcH;
+            int32 scale  = scaleX < scaleY ? scaleX : scaleY;
+            if (scale < 1) scale = 1;
+            int32 drawW  = srcW * scale;
+            int32 drawH  = srcH * scale;
+            int32 offX   = (dstW - drawW) / 2;
+            int32 offY   = (dstH - drawH) / 2;
 
-        if (dimAmount < 1.0f) {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF - (dimAmount * 0xFF));
-            SDL_RenderFillRect(renderer, NULL);
+            uint16 *dst = (uint16 *)surface->pixels;
+            // Fill with black (pillarbox/letterbox)
+            for (int32 y = 0; y < dstH; ++y) {
+                for (int32 x = 0; x < dstW; ++x)
+                    dst[x] = 0;
+                dst += dstPitch;
+            }
+
+            // Copy frame buffer to surface with integer scaling
+            dst = (uint16 *)surface->pixels;
+            for (int32 y = 0; y < drawH; ++y) {
+                int32 srcY = y / scale;
+                uint16 *dstRow = dst + ((offY + y) * dstPitch) + offX;
+                uint16 *srcRow = fb + (srcY * screens[0].pitch);
+                for (int32 x = 0; x < drawW; ++x)
+                    dstRow[x] = srcRow[x / scale];
+            }
+
+            // Apply dim
+            if (dimAmount < 1.0f) {
+                dst = (uint16 *)surface->pixels;
+                for (int32 y = 0; y < dstH; ++y) {
+                    for (int32 x = 0; x < dstW; ++x) {
+                        uint16 p = dst[x];
+                        int32 r = (((p >> 11) & 0x1F) * dimAmount);
+                        int32 g = (((p >> 5) & 0x3F) * dimAmount);
+                        int32 b = ((p & 0x1F) * dimAmount);
+                        dst[x] = (r << 11) | (g << 5) | b;
+                    }
+                    dst += dstPitch;
+                }
+            }
+
+            SDL_UpdateWindowSurface(window);
         }
-        SDL_RenderPresent(renderer);
     }
     return;
 #else
@@ -569,11 +607,16 @@ bool RenderDevice::InitGraphicsAPI()
     pixelSize.y = screens[0].size.y;
 
 #if RETRO_PLATFORM == RETRO_XBOX
+    // Direct framebuffer — no SDL renderer/logical size/textures
+    debugPrint("[SDL2] InitGraphicsAPI: direct framebuffer, pix=%dx%d screen=%dx%d\n",
+               (int)pixelSize.x, (int)pixelSize.y, screenWidth, videoSettings.pixHeight);
     VIDEO_MODE xmode = XVideoGetMode();
-    SDL_RenderSetLogicalSize(renderer, xmode.width, xmode.height);
+    viewSize.x = xmode.width;
+    viewSize.y = xmode.height;
+    textureSize.x = 1024.0;
+    textureSize.y = 512.0;
 #else
     SDL_RenderSetLogicalSize(renderer, videoSettings.pixWidth, SCREEN_YSIZE);
-#endif
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
 #if !RETRO_USE_ORIGINAL_CODE
@@ -594,20 +637,15 @@ bool RenderDevice::InitGraphicsAPI()
 
         if (!screenTexture[s]) {
             PrintLog(PRINT_NORMAL, "ERROR: failed to create screen buffer!\nerror msg: %s", SDL_GetError());
-#if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("[SDL2] InitGraphicsAPI: screenTexture[%d] FAILED: %s\n", s, SDL_GetError());
-#endif
             return 0;
         }
     }
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2] InitGraphicsAPI: screen textures OK, texSize=%dx%d\n", (int)textureSize.x, (int)textureSize.y);
-#endif
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
     imageTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, RETRO_VIDEO_TEXTURE_W, RETRO_VIDEO_TEXTURE_H);
     if (!imageTexture)
         return false;
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+#endif
 
     lastShaderID = -1;
     InitVertexBuffer();
@@ -670,22 +708,18 @@ bool RenderDevice::SetupRendering()
     debugPrint("[SDL2] SetupRendering: entry\n");
 #endif
 #if RETRO_PLATFORM == RETRO_XBOX
-    // pbkit GPU renderer crashes (pb_init conflicts with already-initialized display)
-    // Use software renderer instead — renders to CPU surface, blits via XVideoFlushFB
-    debugPrint("[SDL2] SetupRendering: using SDL_RENDERER_SOFTWARE, window=%p\n", (void*)window);
-    debugPrint("[SDL2] SetupRendering: about to call SDL_CreateRenderer...\n");
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-    debugPrint("[SDL2] SetupRendering: SDL_CreateRenderer returned %p\n", (void*)renderer);
+    // Direct framebuffer — no SDL renderer needed
+    debugPrint("[SDL2] SetupRendering: direct framebuffer, window=%p\n", (void*)window);
+    renderer = NULL;
 #else
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 #endif
 
     if (!renderer) {
+#if RETRO_PLATFORM != RETRO_XBOX
         PrintLog(PRINT_NORMAL, "ERROR: failed to create renderer!");
-#if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[SDL2] SetupRendering: SDL_CreateRenderer FAILED: %s\n", SDL_GetError());
-#endif
         return false;
+#endif
     }
 #if RETRO_PLATFORM == RETRO_XBOX
     debugPrint("[SDL2] SetupRendering: renderer created OK\n");
