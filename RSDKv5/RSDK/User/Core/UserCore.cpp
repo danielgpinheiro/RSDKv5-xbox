@@ -570,6 +570,9 @@ void RSDK::LoadSettingsINI()
             controller[i].keyStart.keyMap  = defaultKeyMaps[i][KEY_START];
             controller[i].keySelect.keyMap = defaultKeyMaps[i][KEY_SELECT];
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSettingsINI: defaults loop done, calling SaveSettingsINI\n");
+#endif
 
         SaveSettingsINI(true);
 #if RETRO_PLATFORM == RETRO_XBOX
@@ -584,6 +587,9 @@ void RSDK::LoadSettingsINI()
 
 void RSDK::SaveSettingsINI(bool32 writeToFile)
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] SaveSettingsINI: entry writeToFile=%d\n", writeToFile);
+#endif
     // the original only saves this file on windows and "dev", consoles use "options.bin"
     // for the decomp, however, we want to save it regardless of platform
 #if RETRO_USE_ORIGINAL_CODE
@@ -602,6 +608,9 @@ void RSDK::SaveSettingsINI(bool32 writeToFile)
 
         dictionary *ini = iniparser_load(pathBuffer);
         FileIO *file    = fOpen(pathBuffer, "wb");
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] SaveSettingsINI: fOpen(%s) returned %p\n", pathBuffer, (void*)file);
+#endif
 
         // ================
         // SIGNATURE
