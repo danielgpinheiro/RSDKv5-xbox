@@ -150,7 +150,8 @@ bool32 RSDK::LoadDataPack(const char *filePath, size_t fileOffset, bool32 useBuf
             dataFileList[f].packID        = dataPackCount;
         }
 
-        dataPacks[dataPackCount].fileBuffer = NULL;
+        dataPacks[dataPackCount].fileBuffer     = NULL;
+        dataPacks[dataPackCount].persistentFile = NULL;
         if (useBuffer) {
             dataPacks[dataPackCount].fileBuffer = (uint8 *)malloc(info.fileSize);
 #if RETRO_PLATFORM == RETRO_XBOX
@@ -198,12 +199,15 @@ bool32 RSDK::OpenDataFile(FileInfo *info, const char *filename)
 
         info->usingFileBuffer = file->useFileBuffer;
         if (!file->useFileBuffer) {
-            info->file = fOpen(dataPacks[file->packID].name, "rb");
-            if (!info->file) {
-                PrintLog(PRINT_NORMAL, "File not found (Unable to open datapack): %s", filename);
-                return false;
+            RSDKContainer *pack = &dataPacks[file->packID];
+            if (!pack->persistentFile) {
+                pack->persistentFile = fOpen(pack->name, "rb");
+                if (!pack->persistentFile) {
+                    PrintLog(PRINT_NORMAL, "File not found (Unable to open datapack): %s", filename);
+                    return false;
+                }
             }
-
+            info->file = pack->persistentFile;
             fSeek(info->file, file->offset, SEEK_SET);
         }
         else {

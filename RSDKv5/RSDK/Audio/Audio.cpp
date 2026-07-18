@@ -309,11 +309,17 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
 
     char fullFilePath[0x80];
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/SoundFX/%s", filename);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[Audio] LoadSfxToSlot: %s slot=%d\n", filename, slot);
+#endif
 
     RETRO_HASH_MD5(hash);
     GEN_HASH_MD5(filename, hash);
 
     if (LoadFile(&info, fullFilePath, FMODE_RB)) {
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[Audio] LoadSfxToSlot: LoadFile OK for %s\n", fullFilePath);
+#endif
         HASH_COPY_MD5(sfxList[slot].hash, hash);
         sfxList[slot].scope              = scope;
         sfxList[slot].maxConcurrentPlays = plays;
@@ -416,6 +422,9 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
     }
 #if !RETRO_USE_ORIGINAL_CODE
     else {
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[Audio] LoadSfxToSlot: LoadFile FAILED for %s\n", filename);
+#endif
         PrintLog(PRINT_ERROR, "Unable to open sfx: %s", filename);
     }
 #endif

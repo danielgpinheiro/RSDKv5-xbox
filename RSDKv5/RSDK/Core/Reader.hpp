@@ -92,6 +92,7 @@ struct RSDKContainer {
     char name[0x100];
     uint8 *fileBuffer;
     int32 fileCount;
+    FileIO *persistentFile;
 };
 
 extern RSDKFileInfo dataFileList[DATAFILE_COUNT];
@@ -137,7 +138,9 @@ bool32 LoadFile(FileInfo *info, const char *filename, uint8 fileMode);
 inline void CloseFile(FileInfo *info)
 {
     if (!info->usingFileBuffer && info->file)
+#if RETRO_PLATFORM != RETRO_XBOX
         fClose(info->file);
+#endif
 
     info->file = NULL;
 }
