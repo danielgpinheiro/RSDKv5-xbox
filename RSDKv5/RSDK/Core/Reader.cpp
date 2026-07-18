@@ -106,6 +106,9 @@ void RSDK::DetectEngineVersion()
 
 bool32 RSDK::LoadDataPack(const char *filePath, size_t fileOffset, bool32 useBuffer)
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadDataPack: trying '%s'\n", filePath);
+#endif
     MEM_ZERO(dataPacks[dataPackCount]);
     useDataPack = false;
     FileInfo info;

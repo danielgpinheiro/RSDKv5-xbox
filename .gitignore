@@ -259,3 +259,16 @@ Ignored/
 android/local.properties
 
 *.res
+*.iso
+*.lib
+build/
+bin/
+*.obj
+*.d
+loader/**
+.vscode/**
+*.exe
+*.pdb
+.DS_Store
+build-xbox.sh
+clean-xbox.sh

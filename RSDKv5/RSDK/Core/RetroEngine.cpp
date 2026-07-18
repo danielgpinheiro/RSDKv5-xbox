@@ -24,6 +24,9 @@ RetroEngine RSDK::engine = RetroEngine();
 
 int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] RunRetroEngine: entry\n");
+#endif
     ParseArguments(argc, argv);
 
     if (engine.consoleEnabled)
@@ -31,6 +34,9 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
     RenderDevice::isRunning = false;
 
     if (InitStorage()) {
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] InitStorage: OK\n");
+#endif
         SKU::InitUserCore();
         LoadSettingsINI();
 
@@ -90,6 +96,9 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         InitEngine();
 #if RETRO_USE_MOD_LOADER
         // we confirmed the game actually is valid & running, lets start some callbacks
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] InitEngine: done, entering main loop\n");
+#endif
         videoSettings.shaderID = shader;
         RenderDevice::InitShaders();
         RenderDevice::SetWindowTitle();
@@ -104,6 +113,11 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         }
 #endif
     }
+#if RETRO_PLATFORM == RETRO_XBOX
+    else {
+        debugPrint("[RSDK] RunRetroEngine: InitStorage FAILED\n");
+    }
+#endif
 
     RenderDevice::InitFPSCap();
 
@@ -1019,10 +1033,16 @@ void RSDK::LoadXMLStages(const tinyxml2::XMLElement *gameElement)
 
 void RSDK::LoadGameConfig()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadGameConfig: trying 'Data/Game/GameConfig.bin' useDataPack=%d\n", useDataPack);
+#endif
     FileInfo info;
     InitFileInfo(&info);
 
     if (LoadFile(&info, "Data/Game/GameConfig.bin", FMODE_RB)) {
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadGameConfig: file opened OK\n");
+#endif
         char buffer[0x100];
         uint32 sig = ReadInt32(&info, false);
 

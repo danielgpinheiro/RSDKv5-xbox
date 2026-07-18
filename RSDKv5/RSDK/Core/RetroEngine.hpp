@@ -90,6 +90,8 @@ enum GameRegions {
 #define RETRO_LINUX   (5)
 #define RETRO_iOS     (6)
 #define RETRO_ANDROID (7)
+// CUSTOM
+#define RETRO_XBOX    (9)
 #define RETRO_UWP     (8)
 
 // ============================
@@ -100,7 +102,7 @@ enum GameRegions {
 
 #define sprintf_s(x, _, ...) snprintf(x, _, __VA_ARGS__)
 
-#if defined _WIN32
+#if defined _WIN32 && !defined __XBOX__
 #undef sprintf_s
 
 #if defined WINAPI_FAMILY
@@ -138,6 +140,9 @@ enum GameRegions {
 #define RETRO_DEVICETYPE (RETRO_MOBILE)
 #elif defined __SWITCH__
 #define RETRO_PLATFORM   (RETRO_SWITCH)
+#define RETRO_DEVICETYPE (RETRO_STANDARD)
+#elif defined __XBOX__
+#define RETRO_PLATFORM   (RETRO_XBOX)
 #define RETRO_DEVICETYPE (RETRO_STANDARD)
 #elif defined __linux__
 #define RETRO_PLATFORM   (RETRO_LINUX)
@@ -417,6 +422,22 @@ enum GameRegions {
 #undef RETRO_INPUTDEVICE_SDL2
 #define RETRO_INPUTDEVICE_SDL2 (1)
 
+#elif RETRO_PLATFORM == RETRO_XBOX
+
+#undef RETRO_RENDERDEVICE_SDL2
+#define RETRO_RENDERDEVICE_SDL2 (1)
+
+#undef RETRO_AUDIODEVICE_SDL2
+#define RETRO_AUDIODEVICE_SDL2 (1)
+
+#undef RETRO_INPUTDEVICE_SDL2
+#define RETRO_INPUTDEVICE_SDL2 (1)
+
+#undef RETRO_INPUTDEVICE_KEYBOARD
+#define RETRO_INPUTDEVICE_KEYBOARD (0)
+
+#undef RETRO_USING_MOUSE
+
 #endif
 
 #if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_UWP
@@ -537,6 +558,14 @@ extern "C" {
 // https://wiki.libsdl.org/FAQDevelopment#do_i_include_sdl.h_or_sdlsdl.h
 #include "SDL.h"
 #endif
+#endif
+
+#if RETRO_PLATFORM == RETRO_XBOX
+#include <hal/debug.h>
+#include <hal/video.h>
+#include <windows.h>
+#include <stdbool.h>
+#include <hal/xbox.h>
 #endif
 
 #include <theora/theoradec.h>

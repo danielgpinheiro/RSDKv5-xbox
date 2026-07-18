@@ -1,0 +1,93 @@
+XBE_TITLE = RSDKv5X
+GEN_XISO = $(XBE_TITLE).iso
+NXDK_DIR = $(CURDIR)/dependencies/xbox/nxdk
+RSDKv5_DIR = $(CURDIR)/RSDKv5
+NXDK_CXX = y
+NXDK_SDL = y
+
+SRCS += \
+	$(CURDIR)/dependencies/all/tinyxml2/tinyxml2.cpp \
+	$(CURDIR)/dependencies/all/iniparser/iniparser.cpp \
+	$(CURDIR)/dependencies/all/iniparser/dictionary.cpp \
+	$(CURDIR)/dependencies/all/miniz/miniz.c \
+	$(RSDKv5_DIR)/main.cpp \
+	$(RSDKv5_DIR)/RSDK/Core/RetroEngine.cpp \
+	$(RSDKv5_DIR)/RSDK/Core/Math.cpp \
+	$(RSDKv5_DIR)/RSDK/Core/Reader.cpp \
+	$(RSDKv5_DIR)/RSDK/Core/Link.cpp \
+	$(RSDKv5_DIR)/RSDK/Core/ModAPI.cpp \
+	$(RSDKv5_DIR)/RSDK/Dev/Debug.cpp \
+	$(RSDKv5_DIR)/RSDK/Storage/Storage.cpp \
+	$(RSDKv5_DIR)/RSDK/Storage/Text.cpp \
+	$(RSDKv5_DIR)/RSDK/Graphics/Drawing.cpp \
+	$(RSDKv5_DIR)/RSDK/Graphics/Scene3D.cpp \
+	$(RSDKv5_DIR)/RSDK/Graphics/Animation.cpp \
+	$(RSDKv5_DIR)/RSDK/Graphics/Sprite.cpp \
+	$(RSDKv5_DIR)/RSDK/Graphics/Palette.cpp \
+	$(RSDKv5_DIR)/RSDK/Graphics/Video.cpp \
+	$(RSDKv5_DIR)/RSDK/Audio/Audio.cpp \
+	$(RSDKv5_DIR)/RSDK/Input/Input.cpp \
+	$(RSDKv5_DIR)/RSDK/Scene/Scene.cpp \
+	$(RSDKv5_DIR)/RSDK/Scene/Collision.cpp \
+	$(RSDKv5_DIR)/RSDK/Scene/Object.cpp \
+	$(RSDKv5_DIR)/RSDK/Scene/Objects/DefaultObject.cpp \
+	$(RSDKv5_DIR)/RSDK/Scene/Objects/DevOutput.cpp \
+	$(RSDKv5_DIR)/RSDK/User/Core/UserAchievements.cpp \
+	$(RSDKv5_DIR)/RSDK/User/Core/UserCore.cpp \
+	$(RSDKv5_DIR)/RSDK/User/Core/UserLeaderboards.cpp \
+	$(RSDKv5_DIR)/RSDK/User/Core/UserPresence.cpp \
+	$(RSDKv5_DIR)/RSDK/User/Core/UserStats.cpp \
+	$(RSDKv5_DIR)/RSDK/User/Core/UserStorage.cpp \
+	$(CURDIR)/Game/SonicMania/Game.c \
+	$(CURDIR)/Game/SonicMania/Objects/All.c
+
+INCLUDES += \
+	-I$(RSDKv5_DIR)/ \
+	-I$(CURDIR)/dependencies/all/ \
+	-I$(CURDIR)/dependencies/all/tinyxml2/ \
+	-I$(CURDIR)/dependencies/all/iniparser/ \
+	-I$(CURDIR)/dependencies/xbox/stb/ \
+	-I$(CURDIR)/Game/SonicMania/ \
+	-I$(CURDIR)/Game/SonicMania/Objects/
+
+EXTRA_OFLAGS = \
+	-O2 \
+	-fsigned-char \
+	-fpermissive
+
+RSDK_FLAGS = \
+	-D__XBOX__ \
+	-DRSDK_USE_SDL2 \
+	-DRETRO_STANDALONE=0 \
+	-DRETRO_REVISION=3 \
+	-DGAME_VERSION=6 \
+	-DRETRO_USE_MOD_LOADER=0 \
+	-DRSDK_AUTOBUILD \
+	-DMINIZ_NO_STDIO \
+	-DMINIZ_NO_ARCHIVE_WRITING_APIS
+
+CFLAGS	+= -g3 $(EXTRA_OFLAGS) -Wall $(INCLUDES) $(RSDK_FLAGS)
+
+CXXFLAGS += $(CFLAGS) -Wpedantic
+
+include $(CURDIR)/dependencies/xbox/Makefile-vorbis.nxdk
+include $(CURDIR)/dependencies/xbox/Makefile-ogg.nxdk
+include $(CURDIR)/dependencies/xbox/Makefile-theora.nxdk
+
+include $(NXDK_DIR)/Makefile
+
+# Bundle Data.rsdk in the ISO
+$(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini
+
+$(OUTPUT_DIR)/Data.rsdk: $(CURDIR)/Data.rsdk | $(OUTPUT_DIR)
+	cp "$<" "$@"
+
+$(OUTPUT_DIR)/Settings.ini: $(CURDIR)/xbox/Settings.ini | $(OUTPUT_DIR)
+	cp "$<" "$@"
+
+clean_local:
+	@echo clean ...
+	rm -Rf ./bin
+	find . -name '*.iso' -type f -delete
+	find . -name '*.obj' ! -path './dependencies/xbox/nxdk/*' -type f -delete
+	find . -name '*.d' ! -path './dependencies/xbox/nxdk/*' -type f -delete

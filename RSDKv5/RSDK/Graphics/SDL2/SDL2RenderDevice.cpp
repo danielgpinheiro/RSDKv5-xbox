@@ -26,6 +26,13 @@ bool RenderDevice::Init()
 
     uint8 flags = 0;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    videoSettings.windowed     = false;
+    VIDEO_MODE xmode           = XVideoGetMode();
+    videoSettings.windowWidth  = xmode.width;
+    videoSettings.windowHeight = xmode.height;
+#else
+
 #if RETRO_PLATFORM == RETRO_ANDROID
     videoSettings.windowed = false;
     SDL_DisplayMode dm;
@@ -48,14 +55,21 @@ bool RenderDevice::Init()
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     SDL_SetHint(SDL_HINT_RENDER_VSYNC, videoSettings.vsync ? "1" : "0");
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, videoSettings.windowWidth,
+                              videoSettings.windowHeight, SDL_WINDOW_SHOWN);
+#else
     window = SDL_CreateWindow(gameTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, videoSettings.windowWidth, videoSettings.windowHeight,
                               SDL_WINDOW_ALLOW_HIGHDPI | flags);
+#endif
+#endif
 
     if (!window) {
         PrintLog(PRINT_NORMAL, "ERROR: failed to create window!");
         return false;
     }
 
+#if RETRO_PLATFORM != RETRO_XBOX
     if (!videoSettings.windowed) {
         SDL_RestoreWindow(window);
         SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -66,6 +80,7 @@ bool RenderDevice::Init()
         SDL_RestoreWindow(window);
         SDL_SetWindowBordered(window, SDL_FALSE);
     }
+#endif
 
     PrintLog(PRINT_NORMAL, "w: %d h: %d windowed: %d", videoSettings.windowWidth, videoSettings.windowHeight, videoSettings.windowed);
 
@@ -110,6 +125,32 @@ void RenderDevice::FlipScreen()
     // pillarboxes in fullscreen from displaying garbage data.
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF);
     SDL_RenderClear(renderer);
+
+#if RETRO_PLATFORM == RETRO_XBOX
+    {
+        VIDEO_MODE xmode = XVideoGetMode();
+        int widthXbox, heightXbox;
+        if (xmode.width == 1280) {
+            widthXbox  = 1280;
+            heightXbox = 720;
+        }
+        else {
+            widthXbox  = 848;
+            heightXbox = 480;
+        }
+
+        SDL_Rect src = { 0, 0, (int)textureSize.x, (int)textureSize.y };
+        SDL_Rect dst = { 0, 0, widthXbox, heightXbox };
+        SDL_RenderCopy(renderer, screenTexture[0], &src, &dst);
+
+        if (dimAmount < 1.0f) {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF - (dimAmount * 0xFF));
+            SDL_RenderFillRect(renderer, NULL);
+        }
+        SDL_RenderPresent(renderer);
+    }
+    return;
+#else
 
 #if (SDL_COMPILEDVERSION >= SDL_VERSIONNUM(2, 0, 18))
     int32 startVert = 0;
@@ -300,6 +341,7 @@ void RenderDevice::FlipScreen()
     }
     // no change here
     SDL_RenderPresent(renderer);
+#endif
 }
 
 void RenderDevice::Release(bool32 isRefresh)
@@ -509,7 +551,12 @@ bool RenderDevice::InitGraphicsAPI()
     pixelSize.x = screens[0].size.x;
     pixelSize.y = screens[0].size.y;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    VIDEO_MODE xmode = XVideoGetMode();
+    SDL_RenderSetLogicalSize(renderer, xmode.width, xmode.height);
+#else
     SDL_RenderSetLogicalSize(renderer, videoSettings.pixWidth, SCREEN_YSIZE);
+#endif
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
 #if !RETRO_USE_ORIGINAL_CODE
@@ -593,7 +640,15 @@ bool RenderDevice::InitShaders()
 
 bool RenderDevice::SetupRendering()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    VIDEO_MODE xmode = XVideoGetMode();
+    uint8 rendererFlag = 0;
+    if (xmode.width == 640)
+        rendererFlag |= SDL_RENDERER_PRESENTVSYNC;
+    renderer = SDL_CreateRenderer(window, -1, rendererFlag);
+#else
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+#endif
 
     if (!renderer) {
         PrintLog(PRINT_NORMAL, "ERROR: failed to create renderer!");

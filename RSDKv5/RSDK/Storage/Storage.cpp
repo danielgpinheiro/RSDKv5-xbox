@@ -29,11 +29,20 @@ DataStorage RSDK::dataStorage[DATASET_MAX];
 bool32 RSDK::InitStorage()
 {
     // Storage limits.
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Xbox has 64MB total RAM; reduce pools to fit
+    dataStorage[DATASET_STG].storageLimit = 10 * 1024 * 1024; // 10MB
+    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024;  //  4MB
+    dataStorage[DATASET_SFX].storageLimit = 12 * 1024 * 1024; // 12MB
+    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;  //  1MB
+    dataStorage[DATASET_TMP].storageLimit = 4 * 1024 * 1024;  //  4MB
+#else
     dataStorage[DATASET_STG].storageLimit = 24 * 1024 * 1024; // 24MB
     dataStorage[DATASET_MUS].storageLimit = 8 * 1024 * 1024;  //  8MB
     dataStorage[DATASET_SFX].storageLimit = 32 * 1024 * 1024; // 32MB
     dataStorage[DATASET_STR].storageLimit = 2 * 1024 * 1024;  //  2MB
     dataStorage[DATASET_TMP].storageLimit = 8 * 1024 * 1024;  //  8MB
+#endif
 
     for (int32 s = 0; s < DATASET_MAX; ++s) {
         dataStorage[s].usedStorage = 0;
@@ -41,8 +50,12 @@ bool32 RSDK::InitStorage()
         dataStorage[s].clearCount  = 0;
         dataStorage[s].memoryTable = (uint32 *)malloc(dataStorage[s].storageLimit);
 
-        if (dataStorage[s].memoryTable == NULL)
+        if (dataStorage[s].memoryTable == NULL) {
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[RSDK] InitStorage: malloc failed for pool %d (limit=%d bytes)\n", s, dataStorage[s].storageLimit);
+#endif
             return false;
+        }
     }
 
     return true;

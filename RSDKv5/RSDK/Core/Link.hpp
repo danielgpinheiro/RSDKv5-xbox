@@ -397,7 +397,7 @@ void LinkGameLogic(EngineInfo info);
 // ORIGINAL CLASS
 
 // Windows.h already included by master header
-#if !(RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_SWITCH)
+#if !(RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_SWITCH || RETRO_PLATFORM == RETRO_XBOX)
 #include <dlfcn.h>
 #endif
 
@@ -410,7 +410,7 @@ void LinkGameLogic(EngineInfo info);
 class Link
 {
 public:
-#if RETRO_PLATFORM == RETRO_WIN
+#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
     typedef HMODULE Handle;
     // constexpr was added in C++11 this is safe don't kill me
     static constexpr const char *extention = ".dll";
@@ -445,7 +445,7 @@ public:
     static inline Handle PlatformLoadLibrary(std::string path)
     {
         Handle ret;
-#if RETRO_PLATFORM == RETRO_WIN
+#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
         ret = (Handle)LoadLibraryA(path.c_str());
 #else
 #if RETRO_PLATFORM == RETRO_ANDROID
@@ -514,7 +514,7 @@ public:
     static inline void Close(Handle handle)
     {
         if (handle)
-#if RETRO_PLATFORM == RETRO_WIN
+#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
             FreeLibrary(handle);
 #else
             dlclose(handle);
@@ -525,7 +525,7 @@ public:
     {
         if (!handle)
             return NULL;
-#if RETRO_PLATFORM == RETRO_WIN
+#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
         return (void *)GetProcAddress(handle, symbol);
 #else
         return (void *)dlsym(handle, symbol);
@@ -534,7 +534,7 @@ public:
 
     static inline char *GetError()
     {
-#if RETRO_PLATFORM == RETRO_WIN
+#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
         return (char *)GetLastErrorAsString();
 #else
         return dlerror();
@@ -542,8 +542,8 @@ public:
     }
 
 private:
-#if RETRO_PLATFORM == RETRO_WIN
-#if _MSC_VER
+#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
+#if _MSC_VER && !defined(__XBOX__)
     // from here: https://stackoverflow.com/a/17387176
     // WINAPI sucks lol
     // Returns the last Win32 error, in string format. Returns an empty string if there is no error.
