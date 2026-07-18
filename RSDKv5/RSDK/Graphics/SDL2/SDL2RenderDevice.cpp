@@ -151,9 +151,19 @@ void RenderDevice::FlipScreen()
 
 #if RETRO_PLATFORM == RETRO_XBOX
     {
+        static int32 flipFrame = 0;
         uint32_t *fb = (uint32_t *)XVideoGetFB();
         VIDEO_MODE xmode = XVideoGetMode();
         if (!fb) return;
+
+        if (flipFrame < 3)
+            debugPrint("[SDL2] FlipScreen: frame=%d fb=%p fbW=%d fbH=%d bpp=%d\n",
+                       flipFrame, (void*)fb, xmode.width, xmode.height, xmode.bpp);
+        flipFrame++;
+
+        // Ensure 32bpp framebuffer
+        if (xmode.bpp != 32)
+            XVideoSetMode(xmode.width, xmode.height, 32, REFRESH_DEFAULT);
 
         uint16 *src  = screens[0].frameBuffer;
         int32 srcW   = screens[0].size.x;
