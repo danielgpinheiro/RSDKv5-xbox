@@ -58,6 +58,7 @@ bool RenderDevice::Init()
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     SDL_SetHint(SDL_HINT_RENDER_VSYNC, videoSettings.vsync ? "1" : "0");
+#endif
 
 #if RETRO_PLATFORM == RETRO_XBOX
     window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, videoSettings.windowWidth,
@@ -66,7 +67,6 @@ bool RenderDevice::Init()
 #else
     window = SDL_CreateWindow(gameTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, videoSettings.windowWidth, videoSettings.windowHeight,
                               SDL_WINDOW_ALLOW_HIGHDPI | flags);
-#endif
 #endif
 
     if (!window) {
