@@ -196,6 +196,7 @@ inline size_t ReadBytes(FileInfo *info, void *data, int32 count)
         info->fileBuffer += bytesRead;
     }
     else {
+        fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(data, 1, count, info->file);
     }
 
@@ -219,6 +220,7 @@ inline uint8 ReadInt8(FileInfo *info)
         }
     }
     else {
+        fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(&result, 1, sizeof(int8), info->file);
     }
 
@@ -248,6 +250,7 @@ inline int16 ReadInt16(FileInfo *info)
         }
     }
     else {
+        fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(buffer.b, 1, sizeof(int16), info->file);
     }
 
@@ -292,6 +295,7 @@ inline int32 ReadInt32(FileInfo *info, bool32 swapEndian)
         }
     }
     else {
+        fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(buffer.b, 1, sizeof(int32), info->file);
     }
 
