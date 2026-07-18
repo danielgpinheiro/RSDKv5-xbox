@@ -153,6 +153,10 @@ bool32 RSDK::LoadDataPack(const char *filePath, size_t fileOffset, bool32 useBuf
         dataPacks[dataPackCount].fileBuffer = NULL;
         if (useBuffer) {
             dataPacks[dataPackCount].fileBuffer = (uint8 *)malloc(info.fileSize);
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[RSDK] LoadDataPack: malloc(%d) for fileBuffer -> %p\n", info.fileSize,
+                       (void *)dataPacks[dataPackCount].fileBuffer);
+#endif
             Seek_Set(&info, 0);
             ReadBytes(&info, dataPacks[dataPackCount].fileBuffer, info.fileSize);
         }
