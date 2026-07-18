@@ -115,6 +115,9 @@ bool32 RSDK::LoadDataPack(const char *filePath, size_t fileOffset, bool32 useBuf
 
     char dataPackPath[0x100];
     sprintf_s(dataPackPath, sizeof(dataPackPath), "%s%s", SKU::userFileDir, filePath);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadDataPack: full path='%s' userFileDir='%s'\n", dataPackPath, SKU::userFileDir);
+#endif
 
     InitFileInfo(&info);
     info.externalFile = true;

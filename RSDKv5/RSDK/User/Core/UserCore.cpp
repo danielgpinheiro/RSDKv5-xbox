@@ -589,6 +589,7 @@ void RSDK::SaveSettingsINI(bool32 writeToFile)
 {
 #if RETRO_PLATFORM == RETRO_XBOX
     debugPrint("[RSDK] SaveSettingsINI: entry writeToFile=%d\n", writeToFile);
+    return; // Xbox ISO is read-only; defaults are baked into the binary
 #endif
     // the original only saves this file on windows and "dev", consoles use "options.bin"
     // for the decomp, however, we want to save it regardless of platform
