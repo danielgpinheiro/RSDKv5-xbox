@@ -146,7 +146,11 @@ void RenderDevice::FlipScreen()
 #if RETRO_PLATFORM == RETRO_XBOX
     {
         // Direct framebuffer blit — no SDL renderer needed
+        debugPrint("[SDL2] FlipScreen: entry, dimAmount=%.2f\n", dimAmount);
         SDL_Surface *surface = SDL_GetWindowSurface(window);
+        debugPrint("[SDL2] FlipScreen: surface=%p w=%d h=%d fmt=%d pitch=%d\n",
+                   (void*)surface, surface ? surface->w : 0, surface ? surface->h : 0,
+                   surface ? surface->format->format : 0, surface ? surface->pitch : 0);
         if (surface) {
             uint16 *fb   = screens[0].frameBuffer;
             int32 srcW   = screens[0].size.x;
@@ -185,6 +189,9 @@ void RenderDevice::FlipScreen()
 
             // Apply dim
             if (dimAmount < 1.0f) {
+#if RETRO_PLATFORM == RETRO_XBOX
+                debugPrint("[SDL2] FlipScreen: applying dimAmount=%.2f\n", dimAmount);
+#endif
                 dst = (uint16 *)surface->pixels;
                 for (int32 y = 0; y < dstH; ++y) {
                     for (int32 x = 0; x < dstW; ++x) {
@@ -198,7 +205,13 @@ void RenderDevice::FlipScreen()
                 }
             }
 
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[SDL2] FlipScreen: calling SDL_UpdateWindowSurface\n");
+#endif
             SDL_UpdateWindowSurface(window);
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[SDL2] FlipScreen: done\n");
+#endif
         }
     }
     return;
