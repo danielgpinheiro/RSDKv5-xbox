@@ -384,7 +384,17 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 void RSDK::ProcessEngine()
 {
     switch (sceneInfo.state) {
-        default: break;
+        default:
+#if RETRO_PLATFORM == RETRO_XBOX
+            { static int32 lastState = -1;
+              if (sceneInfo.state != lastState) {
+                debugPrint("[RSDK] ProcessEngine: state=%d initialized=%d focusState=%d\n",
+                           sceneInfo.state, engine.initialized, engine.focusState);
+                lastState = sceneInfo.state;
+              }
+            }
+#endif
+            break;
 
         case ENGINESTATE_LOAD:
             if (!sceneInfo.listData) {
@@ -806,6 +816,9 @@ void RSDK::StartGameObjects()
     sceneInfo.activeCategory = 0;
     sceneInfo.listPos        = 0;
     sceneInfo.state          = ENGINESTATE_LOAD;
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] StartGameObjects: state=LOAD listData=%p\n", (void*)sceneInfo.listData);
+#endif
     sceneInfo.inEditor       = false;
     sceneInfo.debugMode      = engine.devMenu;
     devMenu.state            = DevMenu_MainMenu;
