@@ -390,14 +390,26 @@ void RSDK::ProcessEngine()
         case ENGINESTATE_LOAD:
             if (!sceneInfo.listData) {
                 sceneInfo.state = ENGINESTATE_NONE;
+#if RETRO_PLATFORM == RETRO_XBOX
+                debugPrint("[RSDK] ProcessEngine: listData=NULL, state=NONE\n");
+#endif
             }
             else {
+#if RETRO_PLATFORM == RETRO_XBOX
+                debugPrint("[RSDK] ProcessEngine: LOAD scene, listPos=%d\n", sceneInfo.listPos);
+#endif
 #if RETRO_USE_MOD_LOADER
                 if (devMenu.modsChanged)
                     RefreshModFolders();
 #endif
                 LoadSceneFolder();
+#if RETRO_PLATFORM == RETRO_XBOX
+                debugPrint("[RSDK] ProcessEngine: LoadSceneFolder done\n");
+#endif
                 LoadSceneAssets();
+#if RETRO_PLATFORM == RETRO_XBOX
+                debugPrint("[RSDK] ProcessEngine: LoadSceneAssets done\n");
+#endif
                 InitObjects();
 
 #if RETRO_REV02
