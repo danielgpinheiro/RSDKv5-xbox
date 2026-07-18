@@ -269,6 +269,9 @@ char buttonNames[18][8] = { "U", "D", "L", "R", "START", "SELECT", "LSTICK", "RS
 
 void RSDK::LoadSettingsINI()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSettingsINI: entry\n");
+#endif
     videoSettings.screenCount = 1;
     videoSettings.pixHeight   = SCREEN_YSIZE;
     videoSettings.windowState = WINDOWSTATE_UNINITIALIZED;
@@ -285,8 +288,14 @@ void RSDK::LoadSettingsINI()
 
     char pathBuffer[0x100];
     sprintf_s(pathBuffer, sizeof(pathBuffer), "%sSettings.ini", SKU::userFileDir);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSettingsINI: loading '%s' platform=%d useBuffer=%d\n", pathBuffer, platform, useBuffer);
+#endif
 
     dictionary *ini = iniparser_load(pathBuffer);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSettingsINI: iniparser_load returned %p\n", (void*)ini);
+#endif
 
     int32 defaultKeyMaps[PLAYER_COUNT + 1][KEY_MAX] = {
         { KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING,
@@ -303,6 +312,9 @@ void RSDK::LoadSettingsINI()
     };
 
     if (ini) {
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSettingsINI: ini loaded, reading settings...\n");
+#endif
 #if RETRO_REV02
         SKU::curSKU.language = iniparser_getint(ini, "Game:language", LANGUAGE_EN);
 #else
@@ -310,6 +322,9 @@ void RSDK::LoadSettingsINI()
 #endif
 
         engine.devMenu = true;
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSettingsINI: calling LoadDataPack dataFile=%s\n", iniparser_getstring(ini, "Game:dataFile", "Data.rsdk"));
+#endif
         if (LoadDataPack(iniparser_getstring(ini, "Game:dataFile", "Data.rsdk"), 0, useBuffer))
             engine.devMenu = iniparser_getboolean(ini, "Game:devMenu", false);
 
@@ -488,6 +503,9 @@ void RSDK::LoadSettingsINI()
         iniparser_freedict(ini);
     }
     else {
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSettingsINI: ini NULL, using defaults\n");
+#endif
         videoSettings.windowed       = true;
         videoSettings.bordered       = false;
         videoSettings.exclusiveFS    = true;
@@ -554,8 +572,14 @@ void RSDK::LoadSettingsINI()
         }
 
         SaveSettingsINI(true);
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSettingsINI: defaults saved, calling LoadDataPack\n");
+#endif
         engine.devMenu = LoadDataPack("Data.rsdk", 0, useBuffer);
     }
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSettingsINI: done\n");
+#endif
 }
 
 void RSDK::SaveSettingsINI(bool32 writeToFile)
