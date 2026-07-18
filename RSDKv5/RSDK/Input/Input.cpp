@@ -120,7 +120,7 @@ void RSDK::InitInputDevices()
     SKU::InitNXInputAPI();
 #endif
 
-#if RETRO_INPUTDEVICE_SDL2
+#if RETRO_INPUTDEVICE_SDL2 && RETRO_PLATFORM != RETRO_XBOX
     SKU::InitSDL2InputAPI();
 #endif
 
@@ -135,7 +135,7 @@ void RSDK::InitInputDevices()
 
 void RSDK::ReleaseInputDevices()
 {
-#if RETRO_INPUTDEVICE_SDL2
+#if RETRO_INPUTDEVICE_SDL2 && RETRO_PLATFORM != RETRO_XBOX
     SKU::ReleaseSDL2InputAPI();
 #endif
 }
