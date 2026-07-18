@@ -147,63 +147,12 @@ void RenderDevice::FlipScreen()
 
 #if RETRO_PLATFORM == RETRO_XBOX
     {
-        // Direct framebuffer — bypass SDL surface, use XVideoGetFB
-        uint8_t *fbRaw = (uint8_t *)XVideoGetFB();
-        VIDEO_MODE xmode = XVideoGetMode();
-
-        if (!fbRaw)
-            return;
-
-        uint16 *src   = screens[0].frameBuffer;
-        int32 srcW    = screens[0].size.x;
-        int32 srcH    = SCREEN_YSIZE;
-        int32 fbW     = xmode.width;
-        int32 fbH     = xmode.height;
-        int32 fbPitch = xmode.width * 4;
-
-        int32 scale = (fbW / srcW) < (fbH / srcH) ? (fbW / srcW) : (fbH / srcH);
-        if (scale < 1) scale = 1;
-        int32 drawW = srcW * scale;
-        int32 drawH = srcH * scale;
-        int32 offX  = (fbW - drawW) / 2;
-        int32 offY  = (fbH - drawH) / 2;
-
-        // Fill black
-        for (int32 y = 0; y < fbH; y++) {
-            uint32 *row = (uint32 *)(fbRaw + y * fbPitch);
-            for (int32 x = 0; x < fbW; x++)
-                row[x] = 0xFF000000;
+        // TEST: fill framebuffer solid red to verify XVideoGetFB + XVideoFlushFB work
+        uint32_t *fb = (uint32_t *)XVideoGetFB();
+        if (fb) {
+            for (int32 i = 0; i < 1280 * 720; i++) fb[i] = 0xFFFF0000;
+            XVideoFlushFB();
         }
-
-        // Copy frame buffer (RGB565) → framebuffer (XRGB8888)
-        for (int32 y = 0; y < drawH; y++) {
-            int32 srcY       = y / scale;
-            uint32 *dstRow   = (uint32 *)(fbRaw + (offY + y) * fbPitch) + offX;
-            uint16 *srcRow   = src + srcY * screens[0].pitch;
-            for (int32 x = 0; x < drawW; x++) {
-                uint16 p   = srcRow[x / scale];
-                uint32 r   = ((p >> 11) & 0x1F) * 255 / 31;
-                uint32 g   = ((p >> 5) & 0x3F) * 255 / 63;
-                uint32 b   = (p & 0x1F) * 255 / 31;
-                dstRow[x]  = 0xFF000000 | (r << 16) | (g << 8) | b;
-            }
-        }
-
-        // Apply dim
-        if (dimAmount < 1.0f) {
-            for (int32 y = 0; y < fbH; y++) {
-                uint32 *row = (uint32 *)(fbRaw + y * fbPitch);
-                for (int32 x = 0; x < fbW; x++) {
-                    uint32 p  = row[x];
-                    uint32 r  = ((p >> 16) & 0xFF) * dimAmount;
-                    uint32 g  = ((p >> 8) & 0xFF) * dimAmount;
-                    uint32 b  = (p & 0xFF) * dimAmount;
-                    row[x]    = 0xFF000000 | (r << 16) | (g << 8) | b;
-                }
-            }
-        }
-
-        XVideoFlushFB();
     }
     return;
 #else
