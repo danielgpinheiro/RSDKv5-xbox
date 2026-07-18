@@ -285,6 +285,9 @@ void RSDK::LoadSettingsINI()
 
     // Consoles load the entire file and buffer it, while PC just io's the file when needed
     bool32 useBuffer = !(platform == PLATFORM_PC || platform == PLATFORM_DEV);
+#if RETRO_PLATFORM == RETRO_XBOX
+    useBuffer = false; // Xbox has 64MB RAM — cannot buffer 200MB Data.rsdk into memory
+#endif
 
     char pathBuffer[0x100];
     sprintf_s(pathBuffer, sizeof(pathBuffer), "%sSettings.ini", SKU::userFileDir);
