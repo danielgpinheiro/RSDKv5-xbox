@@ -61,14 +61,13 @@ bool RenderDevice::Init()
 #endif
 
 #if RETRO_PLATFORM == RETRO_XBOX
-    // SDL2 xbox driver may overwrite our display config — re-init
+    // SDL xbox driver may alter display mode — re-init to ensure correct framebuffer
     window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, videoSettings.windowWidth,
                               videoSettings.windowHeight, SDL_WINDOW_SHOWN);
     debugPrint("[SDL2] Init: SDL_CreateWindow done, window=%p\n", (void*)window);
 
-    // Force SDL to create framebuffer surface, then re-claim XVideo
-    SDL_Surface *forced = SDL_GetWindowSurface(window);
-    debugPrint("[SDL2] Init: SDL_GetWindowSurface=%p, XVideoGetFB=%p\n", (void*)forced, (void*)XVideoGetFB());
+    XVideoSetMode(videoSettings.windowWidth, videoSettings.windowHeight, 32, REFRESH_DEFAULT);
+    debugPrint("[SDL2] Init: XVideoSetMode re-init, XVideoGetFB=%p\n", (void*)XVideoGetFB());
 #else
     window = SDL_CreateWindow(gameTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, videoSettings.windowWidth, videoSettings.windowHeight,
                               SDL_WINDOW_ALLOW_HIGHDPI | flags);
@@ -152,59 +151,55 @@ void RenderDevice::FlipScreen()
 
 #if RETRO_PLATFORM == RETRO_XBOX
     {
-        SDL_Surface *surf = SDL_GetWindowSurface(window);
-        if (surf && surf->pixels) {
-            uint32 *dst  = (uint32 *)surf->pixels;
-            uint16 *src  = screens[0].frameBuffer;
-            int32 srcW   = screens[0].size.x;
-            int32 srcH   = SCREEN_YSIZE;
-            int32 dstW   = surf->w;
-            int32 dstH   = surf->h;
-            int32 dstP   = surf->pitch / 4;
+        uint32_t *fb = (uint32_t *)XVideoGetFB();
+        VIDEO_MODE xmode = XVideoGetMode();
+        if (!fb) return;
 
-            int32 scale = (dstW / srcW) < (dstH / srcH) ? (dstW / srcW) : (dstH / srcH);
-            if (scale < 1) scale = 1;
-            int32 drawW = srcW * scale;
-            int32 drawH = srcH * scale;
-            int32 offX  = (dstW - drawW) / 2;
-            int32 offY  = (dstH - drawH) / 2;
+        uint16 *src  = screens[0].frameBuffer;
+        int32 srcW   = screens[0].size.x;
+        int32 srcH   = SCREEN_YSIZE;
+        int32 fbW    = xmode.width;
+        int32 fbH    = xmode.height;
 
-            // Fill black
-            for (int32 y = 0; y < dstH; y++) {
-                uint32 *row = dst + y * dstP;
-                for (int32 x = 0; x < dstW; x++) row[x] = 0xFF000000;
+        int32 scale = (fbW / srcW) < (fbH / srcH) ? (fbW / srcW) : (fbH / srcH);
+        if (scale < 1) scale = 1;
+        int32 drawW = srcW * scale;
+        int32 drawH = srcH * scale;
+        int32 offX  = (fbW - drawW) / 2;
+        int32 offY  = (fbH - drawH) / 2;
+
+        // Fill black
+        for (int32 y = 0; y < fbH; y++)
+            for (int32 x = 0; x < fbW; x++)
+                fb[y * fbW + x] = 0xFF000000;
+
+        // Blit RGB565 → XRGB8888
+        for (int32 y = 0; y < drawH; y++) {
+            int32 srcY      = y / scale;
+            uint16 *srcRow  = src + srcY * screens[0].pitch;
+            uint32 *dstRow  = fb + (offY + y) * fbW + offX;
+            for (int32 x = 0; x < drawW; x++) {
+                uint16 p = srcRow[x / scale];
+                uint32 r = ((p >> 11) & 0x1F) * 255 / 31;
+                uint32 g = ((p >> 5)  & 0x3F) * 255 / 63;
+                uint32 b = (p & 0x1F) * 255 / 31;
+                dstRow[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
-
-            // Blit RGB565 → XRGB8888
-            for (int32 y = 0; y < drawH; y++) {
-                int32 srcY      = y / scale;
-                uint32 *dstRow  = dst + (offY + y) * dstP + offX;
-                uint16 *srcRow  = src + srcY * screens[0].pitch;
-                for (int32 x = 0; x < drawW; x++) {
-                    uint16 p  = srcRow[x / scale];
-                    uint32 r  = ((p >> 11) & 0x1F) * 255 / 31;
-                    uint32 g  = ((p >> 5) & 0x3F) * 255 / 63;
-                    uint32 b  = (p & 0x1F) * 255 / 31;
-                    dstRow[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
-                }
-            }
-
-            // Dim
-            if (dimAmount < 1.0f) {
-                for (int32 y = 0; y < dstH; y++) {
-                    uint32 *row = dst + y * dstP;
-                    for (int32 x = 0; x < dstW; x++) {
-                        uint32 p = row[x];
-                        uint32 r = ((p >> 16) & 0xFF) * dimAmount;
-                        uint32 g = ((p >> 8)  & 0xFF) * dimAmount;
-                        uint32 b = (p & 0xFF) * dimAmount;
-                        row[x]   = 0xFF000000 | (r << 16) | (g << 8) | b;
-                    }
-                }
-            }
-
-            SDL_UpdateWindowSurface(window);
         }
+
+        // Dim
+        if (dimAmount < 1.0f) {
+            for (int32 y = 0; y < fbH; y++)
+                for (int32 x = 0; x < fbW; x++) {
+                    uint32 p = fb[y * fbW + x];
+                    uint32 r = ((p >> 16) & 0xFF) * dimAmount;
+                    uint32 g = ((p >> 8)  & 0xFF) * dimAmount;
+                    uint32 b = (p & 0xFF) * dimAmount;
+                    fb[y * fbW + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                }
+        }
+
+        XVideoFlushFB();
     }
     return;
 #else
