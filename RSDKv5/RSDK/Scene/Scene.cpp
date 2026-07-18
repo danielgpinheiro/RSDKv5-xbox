@@ -186,6 +186,9 @@ void RSDK::LoadSceneFolder()
             CloseFile(&info);
             return;
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSceneFolder: sig OK, reading stage config...\n");
+#endif
 
         sceneInfo.useGlobalObjects = ReadInt8(&info);
         sceneInfo.classCount       = 0;
@@ -215,6 +218,9 @@ void RSDK::LoadSceneFolder()
                 }
             }
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSceneFolder: objectCount=%d classCount=%d\n", objectCount, sceneInfo.classCount);
+#endif
 
         for (int32 o = 0; o < sceneInfo.classCount; ++o) {
             ObjectClass *objClass = &objectClassList[stageObjectIDs[o]];
@@ -270,12 +276,21 @@ void RSDK::LoadSceneFolder()
         }
 
         uint8 sfxCount = ReadInt8(&info);
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSceneFolder: palettes done, sfxCount=%d\n", sfxCount);
+#endif
         char sfxPath[0x100];
         for (int32 i = 0; i < sfxCount; ++i) {
             ReadString(&info, sfxPath);
             uint8 maxConcurrentPlays = ReadInt8(&info);
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[RSDK] LoadSceneFolder: loading sfx[%d]=%s\n", i, sfxPath);
+#endif
             LoadSfx(sfxPath, maxConcurrentPlays, SCOPE_STAGE);
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSceneFolder: sfx done, closing StageConfig\n");
+#endif
 
         CloseFile(&info);
     }
