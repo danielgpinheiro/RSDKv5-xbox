@@ -143,9 +143,8 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
     while (RenderDevice::isRunning) {
 #if RETRO_PLATFORM == RETRO_XBOX
         static int32 loopTick = 0;
-        if (loopTick < 10) {
-            debugPrint("[RSDK] tick %d state=%d listData=%p catCount=%d\n",
-                       loopTick++, sceneInfo.state, (void*)sceneInfo.listData, sceneInfo.categoryCount);
+        if (loopTick < 3) {
+            debugPrint("[RSDK] tick %d state=%d\n", loopTick++, sceneInfo.state);
         }
 #endif
         RenderDevice::ProcessEvents();

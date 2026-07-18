@@ -237,8 +237,10 @@ void RSDK::SKU::InitSDL2InputAPI()
 {
 #if RETRO_PLATFORM == RETRO_XBOX
     debugPrint("[SDL2Input] InitSDL2InputAPI: calling SDL_InitSubSystem\n");
-#endif
+    SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
+#else
     SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC);
+#endif
 #if RETRO_PLATFORM == RETRO_XBOX
     debugPrint("[SDL2Input] InitSDL2InputAPI: SDL_InitSubSystem done, loading controller db\n");
 #endif
