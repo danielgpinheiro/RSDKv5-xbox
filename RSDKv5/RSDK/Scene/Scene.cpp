@@ -23,6 +23,9 @@ SceneInfo RSDK::sceneInfo;
 
 void RSDK::LoadSceneFolder()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSceneFolder: entry\n");
+#endif
 #if RETRO_PLATFORM == RETRO_ANDROID
     ShowLoadingIcon();
 #endif
@@ -157,14 +160,26 @@ void RSDK::LoadSceneFolder()
 
     // Load TileConfig
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Stages/%s/TileConfig.bin", currentSceneFolder);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSceneFolder: loading %s\n", fullFilePath);
+#endif
     LoadTileConfig(fullFilePath);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSceneFolder: TileConfig done\n");
+#endif
 
     // Load StageConfig
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Stages/%s/StageConfig.bin", currentSceneFolder);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSceneFolder: loading %s\n", fullFilePath);
+#endif
 
     FileInfo info;
     InitFileInfo(&info);
     if (LoadFile(&info, fullFilePath, FMODE_RB)) {
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[RSDK] LoadSceneFolder: StageConfig opened OK\n");
+#endif
         uint32 sig = ReadInt32(&info, false);
 
         if (sig != RSDK_SIGNATURE_CFG) {
@@ -264,9 +279,20 @@ void RSDK::LoadSceneFolder()
 
         CloseFile(&info);
     }
+#if RETRO_PLATFORM == RETRO_XBOX
+    else {
+        debugPrint("[RSDK] LoadSceneFolder: StageConfig LoadFile FAILED\n");
+    }
+#endif
 
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Stages/%s/16x16Tiles.gif", currentSceneFolder);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSceneFolder: loading %s\n", fullFilePath);
+#endif
     LoadStageGIF(fullFilePath);
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[RSDK] LoadSceneFolder: done\n");
+#endif
 
 #if RETRO_USE_MOD_LOADER
     for (int32 h = 0; h < (int32)objectHookList.size(); ++h) {
