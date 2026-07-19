@@ -15,10 +15,17 @@ public:
 
     inline static void HandleStreamLoad(ChannelInfo *channel, bool32 async)
     {
+#if RETRO_PLATFORM == RETRO_XBOX
+        // NXDK SDL2 thread crashes when LoadStream shares the Data.rsdk
+        // persistent file handle across threads; load synchronously instead.
+        (void)async;
+        LoadStream(channel);
+#else
         if (async)
             SDL_CreateThread((SDL_ThreadFunction)LoadStream, "LoadStream", (void *)channel);
         else
             LoadStream(channel);
+#endif
     }
 
 private:
