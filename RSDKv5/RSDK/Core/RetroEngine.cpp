@@ -1108,6 +1108,9 @@ void RSDK::LoadGameConfig()
                 }
             }
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[G3]\n");
+#endif
 
         for (int32 i = 0; i < PALETTE_BANK_COUNT; ++i) {
             activeGlobalRows[i] = ReadInt16(&info);
@@ -1125,6 +1128,9 @@ void RSDK::LoadGameConfig()
                 }
             }
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[G4]\n");
+#endif
 
         uint8 sfxCnt = ReadInt8(&info);
         for (int32 i = 0; i < sfxCnt; ++i) {
@@ -1132,6 +1138,9 @@ void RSDK::LoadGameConfig()
             uint8 maxConcurrentPlays = ReadInt8(&info);
             LoadSfx(buffer, maxConcurrentPlays, SCOPE_GLOBAL);
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[G5]\n");
+#endif
 
         uint16 totalSceneCount = ReadInt16(&info);
 
