@@ -141,45 +141,74 @@ void RenderDevice::FlipScreen()
         if (xmode.bpp != 32)
             XVideoSetMode(xmode.width, xmode.height, 32, REFRESH_DEFAULT);
 
-        // Fill black (pillarbox/letterbox)
-        for (int32 i = 0; i < xmode.width * xmode.height; i++)
-            fb[i] = 0xFF000000;
+        // --- Static lookup tables (computed once) ---
+        static uint8 r5[32], g6[64], b5[32];
+        static int32 srcX_remap[640];
+        static bool  lutsReady = false;
+        static int32 lastFbW   = 0;
 
-        // Blit frame buffer — RGB565 → XRGB8888
-        // X axis fills width (stretch to 640), Y axis integer-scaled with bars
-        uint16 *src  = screens[0].frameBuffer;
-        int32 srcW   = screens[0].size.x;
-        int32 srcH   = SCREEN_YSIZE;
-        int32 fbW    = xmode.width;
-        int32 fbH    = xmode.height;
-        int32 scaleY = fbH / srcH; if (scaleY < 1) scaleY = 1;
-        int32 drawH  = srcH * scaleY;
-        int32 offY   = (fbH - drawH) / 2;
-
-        for (int32 y = 0; y < drawH; y++) {
-            int32 srcY      = y / scaleY;
-            uint32 *dstRow  = fb + (offY + y) * fbW;
-            uint16 *srcRow  = src + srcY * screens[0].pitch;
-            for (int32 x = 0; x < fbW; x++) {
-                int32 srcX  = x * srcW / fbW;
-                uint16 p    = srcRow[srcX];
-                dstRow[x]   = 0xFF000000
-                            | ((((p >> 11) & 0x1F) * 255 / 31) << 16)
-                            | ((((p >> 5)  & 0x3F) * 255 / 63) << 8)
-                            | ((p & 0x1F) * 255 / 31);
-            }
+        if (!lutsReady) {
+            for (int32 i = 0; i < 32; i++) r5[i] = (uint8)(i * 255 / 31);
+            for (int32 i = 0; i < 64; i++) g6[i] = (uint8)(i * 255 / 63);
+            for (int32 i = 0; i < 32; i++) b5[i] = (uint8)(i * 255 / 31);
         }
 
-        // Dim
-        if (dimAmount < 1.0f) {
-            for (int32 y = 0; y < fbH; y++)
-                for (int32 x = 0; x < fbW; x++) {
-                    uint32 p = fb[y * fbW + x];
-                    uint32 r = ((p >> 16) & 0xFF) * dimAmount;
-                    uint32 g = ((p >> 8)  & 0xFF) * dimAmount;
-                    uint32 b = (p & 0xFF) * dimAmount;
-                    fb[y * fbW + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+        // --- Game framebuffer params ---
+        uint16 *src = screens[0].frameBuffer;
+        int32 srcW  = screens[0].size.x;
+        int32 srcH  = SCREEN_YSIZE;
+        int32 fbW   = xmode.width;
+        int32 fbH   = xmode.height;
+        int32 pitch = screens[0].pitch;
+        int32 scaleY = fbH / srcH; if (scaleY < 1) scaleY = 1;
+        int32 drawH = srcH * scaleY;
+        int32 offY  = (fbH - drawH) / 2;
+
+        // --- Precompute srcX remap (avoids x*srcW/fbW per pixel) ---
+        if (!lutsReady || lastFbW != fbW) {
+            for (int32 x = 0; x < fbW; x++)
+                srcX_remap[x] = x * srcW / fbW;
+            lastFbW = fbW;
+            lutsReady = true;
+        }
+
+        // --- Precompute dim multiplier (0-256 range, use shift>>8 instead of /255) ---
+        uint32 dimMul = (uint32)(dimAmount * 256.0f);
+
+        // --- Single-pass fill, blit, and dim ---
+        for (int32 y = 0; y < fbH; y++) {
+            uint32 *dstRow = fb + y * fbW;
+
+            if (y >= offY && y < offY + drawH) {
+                uint16 *srcRow = src + ((y - offY) / scaleY) * pitch;
+
+                if (dimMul >= 256) {
+                    for (int32 x = 0; x < fbW; x++) {
+                        uint16 p = srcRow[srcX_remap[x]];
+                        dstRow[x] = 0xFF000000
+                                  | ((uint32)r5[(p >> 11) & 0x1F] << 16)
+                                  | ((uint32)g6[(p >> 5)  & 0x3F] << 8)
+                                  | ((uint32)b5[p & 0x1F]);
+                    }
                 }
+                else if (dimMul > 0) {
+                    for (int32 x = 0; x < fbW; x++) {
+                        uint16 p = srcRow[srcX_remap[x]];
+                        dstRow[x] = 0xFF000000
+                                  | ((((uint32)r5[(p >> 11) & 0x1F] * dimMul) >> 8) << 16)
+                                  | ((((uint32)g6[(p >> 5)  & 0x3F] * dimMul) >> 8) << 8)
+                                  | ((((uint32)b5[p & 0x1F] * dimMul) >> 8));
+                    }
+                }
+                else {
+                    for (int32 x = 0; x < fbW; x++)
+                        dstRow[x] = 0xFF000000;
+                }
+            }
+            else {
+                for (int32 x = 0; x < fbW; x++)
+                    dstRow[x] = 0xFF000000;
+            }
         }
 
         XVideoFlushFB();

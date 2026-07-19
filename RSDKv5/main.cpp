@@ -84,7 +84,7 @@ static int SCREEN_HEIGHT;
 
 void SetXboxResolution()
 {
-    SCREEN_WIDTH  = 720;
+    SCREEN_WIDTH  = 640;
     SCREEN_HEIGHT = 480;
     XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
 }
