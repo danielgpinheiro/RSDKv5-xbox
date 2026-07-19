@@ -143,6 +143,9 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 
     while (RenderDevice::isRunning) {
         RenderDevice::ProcessEvents();
+#if RETRO_PLATFORM == RETRO_XBOX
+        { static int32 te; if (te < 3) { debugPrint("E\n"); te++; } }
+#endif
 
         if (!RenderDevice::isRunning)
             break;
@@ -151,9 +154,15 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
             RenderDevice::UpdateFPSCap();
 
             AudioDevice::FrameInit();
+#if RETRO_PLATFORM == RETRO_XBOX
+            { static int32 ta; if (ta < 3) { debugPrint("A\n"); ta++; } }
+#endif
 
 #if RETRO_REV02
             SKU::userCore->FrameInit();
+#if RETRO_PLATFORM == RETRO_XBOX
+            { static int32 tu; if (tu < 3) { debugPrint("U\n"); tu++; } }
+#endif
 
             if (SKU::userCore->CheckEnginePause())
                 continue;
