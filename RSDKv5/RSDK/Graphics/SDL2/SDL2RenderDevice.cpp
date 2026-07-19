@@ -141,40 +141,25 @@ void RenderDevice::FlipScreen()
         if (xmode.bpp != 32)
             XVideoSetMode(xmode.width, xmode.height, 32, REFRESH_DEFAULT);
 
-        // Fill black
-        for (int32 y = 0; y < xmode.height; y++)
-            for (int32 x = 0; x < xmode.width; x++)
-                fb[y * xmode.width + x] = 0xFF000000;
-
         // Blit frame buffer (game content) — RGB565 → XRGB8888
-        // Fill the display with nearest-neighbor integer scaling
+        // Full-screen stretch with nearest-neighbor, no cropping
         uint16 *src  = screens[0].frameBuffer;
         int32 srcW   = screens[0].size.x;
         int32 srcH   = SCREEN_YSIZE;
         int32 fbW    = xmode.width;
         int32 fbH    = xmode.height;
-        int32 scale  = ((fbW + srcW - 1) / srcW) > ((fbH + srcH - 1) / srcH)
-                       ? ((fbW + srcW - 1) / srcW) : ((fbH + srcH - 1) / srcH);
-        if (scale < 1) scale = 1;
-        int32 drawW  = srcW * scale;
-        int32 drawH  = srcH * scale;
-        int32 offX   = (fbW - drawW) / 2;
-        int32 offY   = (fbH - drawH) / 2;
 
-        for (int32 y = 0; y < drawH; y++) {
-            int32 dstY  = offY + y;
-            if (dstY < 0 || dstY >= fbH) continue;
-            int32 srcY  = y / scale;
-            uint32 *dstRow = fb + dstY * fbW;
-            uint16 *srcRow = src + srcY * screens[0].pitch;
-            for (int32 x = 0; x < drawW; x++) {
-                int32 dstX = offX + x;
-                if (dstX < 0 || dstX >= fbW) continue;
-                uint16 p   = srcRow[x / scale];
+        for (int32 y = 0; y < fbH; y++) {
+            int32 srcY      = y * srcH / fbH;
+            uint32 *dstRow  = fb + y * fbW;
+            uint16 *srcRow  = src + srcY * screens[0].pitch;
+            for (int32 x = 0; x < fbW; x++) {
+                int32 srcX = x * srcW / fbW;
+                uint16 p   = srcRow[srcX];
                 uint32 r   = ((p >> 11) & 0x1F) * 255 / 31;
                 uint32 g   = ((p >> 5)  & 0x3F) * 255 / 63;
                 uint32 b   = (p & 0x1F) * 255 / 31;
-                dstRow[dstX] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                dstRow[x]  = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
 
