@@ -123,6 +123,7 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 #if RETRO_PLATFORM == RETRO_XBOX
             debugPrint("R%d\n", sceneInfo.state);
             sceneInfo.state = ENGINESTATE_LOAD;
+            debugPrint("Z\n");
 #endif
             RenderDevice::isRunning = true;
         }
