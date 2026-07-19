@@ -1183,6 +1183,9 @@ void RSDK::LoadGameConfig()
             AllocateStorage((void **)&sceneInfo.listData, sizeof(SceneListEntry) * totalSceneCount, DATASET_STG, false);
 #endif
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[G5a]\n");
+#endif
 
         sceneInfo.categoryCount = ReadInt8(&info);
         sceneInfo.listPos       = 0;
@@ -1197,6 +1200,9 @@ void RSDK::LoadGameConfig()
         sceneInfo.listCategory = listCategory.data();
 #else
         AllocateStorage((void **)&sceneInfo.listCategory, sizeof(SceneListInfo) * categoryCount, DATASET_STG, false);
+#endif
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[G5b]\n");
 #endif
         sceneInfo.listPos = 0;
 
