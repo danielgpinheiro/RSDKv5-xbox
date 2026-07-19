@@ -214,68 +214,51 @@ void RSDK::LoadStream(ChannelInfo *channel)
     if (channel->state != CHANNEL_LOADING_STREAM)
         return;
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("LS:0 ");
-#endif
     stb_vorbis_close(vorbisInfo);
+
+    // Free previous track's buffers to avoid leaking MUS pool memory
+    if (streamBuffer) {
+        RemoveStorageEntry((void **)&streamBuffer);
+        streamBuffer = NULL;
+    }
+    if (vorbisAlloc.alloc_buffer) {
+        RemoveStorageEntry((void **)&vorbisAlloc.alloc_buffer);
+        vorbisAlloc.alloc_buffer = NULL;
+    }
 
     FileInfo info;
     InitFileInfo(&info);
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("LS:1 ");
-#endif
     if (LoadFile(&info, streamFilePath, FMODE_RB)) {
-#if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("LS:2(%d) ", info.fileSize);
-        debugPrint("M[%d/%d/%d] ",
-            (int)dataStorage[DATASET_MUS].usedStorage,
-            (int)dataStorage[DATASET_MUS].entryCount,
-            (int)dataStorage[DATASET_MUS].storageLimit);
-#endif
         streamBufferSize = info.fileSize;
-        streamBuffer     = NULL;
         AllocateStorage((void **)&streamBuffer, info.fileSize, DATASET_MUS, false);
-#if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("LS:3(%p) ", streamBuffer);
-#endif
+        if (!streamBuffer) {
+            CloseFile(&info);
+            channel->state = CHANNEL_IDLE;
+            return;
+        }
         ReadBytes(&info, streamBuffer, streamBufferSize);
-#if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("LS:4(%d) ", (int)streamBufferSize);
-#endif
         CloseFile(&info);
 
         if (streamBufferSize > 0) {
-#if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("LS:5 ");
-#endif
             vorbisAlloc.alloc_buffer_length_in_bytes = 512 * 1024; // 512KiB
             AllocateStorage((void **)&vorbisAlloc.alloc_buffer, 512 * 1024, DATASET_MUS, false);
-#if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("LS:6(%p) ", vorbisAlloc.alloc_buffer);
-#endif
-            vorbisInfo = stb_vorbis_open_memory(streamBuffer, streamBufferSize, NULL, &vorbisAlloc);
-#if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("LS:7(%p) ", vorbisInfo);
-#endif
-            if (vorbisInfo) {
-                if (streamStartPos)
-                    stb_vorbis_seek(vorbisInfo, streamStartPos);
-                UpdateStreamBuffer(channel);
 
-                channel->state = CHANNEL_STREAM;
+            if (vorbisAlloc.alloc_buffer) {
+                vorbisInfo = stb_vorbis_open_memory(streamBuffer, streamBufferSize, NULL, &vorbisAlloc);
+                if (vorbisInfo) {
+                    if (streamStartPos)
+                        stb_vorbis_seek(vorbisInfo, streamStartPos);
+                    UpdateStreamBuffer(channel);
+
+                    channel->state = CHANNEL_STREAM;
+                }
             }
         }
     }
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("LS:8 ");
-#endif
 
     if (channel->state == CHANNEL_LOADING_STREAM)
         channel->state = CHANNEL_IDLE;
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("LS:DONE\n");
-#endif
 }
 
 int32 RSDK::PlayStream(const char *filename, uint32 slot, uint32 startPos, uint32 loopPoint, bool32 loadASync)
