@@ -146,25 +146,23 @@ void RenderDevice::FlipScreen()
             fb[i] = 0xFF000000;
 
         // Blit frame buffer — RGB565 → XRGB8888
-        // Independent X/Y integer scaling, black bars on non-filling axis
+        // X axis fills width (stretch to 640), Y axis integer-scaled with bars
         uint16 *src  = screens[0].frameBuffer;
         int32 srcW   = screens[0].size.x;
         int32 srcH   = SCREEN_YSIZE;
         int32 fbW    = xmode.width;
         int32 fbH    = xmode.height;
-        int32 scaleX = fbW / srcW; if (scaleX < 1) scaleX = 1;
         int32 scaleY = fbH / srcH; if (scaleY < 1) scaleY = 1;
-        int32 drawW  = srcW * scaleX;
         int32 drawH  = srcH * scaleY;
-        int32 offX   = (fbW - drawW) / 2;
         int32 offY   = (fbH - drawH) / 2;
 
         for (int32 y = 0; y < drawH; y++) {
             int32 srcY      = y / scaleY;
-            uint32 *dstRow  = fb + (offY + y) * fbW + offX;
+            uint32 *dstRow  = fb + (offY + y) * fbW;
             uint16 *srcRow  = src + srcY * screens[0].pitch;
-            for (int32 x = 0; x < drawW; x++) {
-                uint16 p    = srcRow[x / scaleX];
+            for (int32 x = 0; x < fbW; x++) {
+                int32 srcX  = x * srcW / fbW;
+                uint16 p    = srcRow[srcX];
                 dstRow[x]   = 0xFF000000
                             | ((((p >> 11) & 0x1F) * 255 / 31) << 16)
                             | ((((p >> 5)  & 0x3F) * 255 / 63) << 8)
