@@ -795,6 +795,9 @@ void RSDK::StartGameObjects()
 
     SetupFunctionTables();
     InitGameLink();
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[L]\n");
+#endif
     LoadGameConfig();
 }
 
@@ -1065,12 +1068,18 @@ void RSDK::LoadGameConfig()
         debugPrint("[RSDK] LoadGameConfig: file opened OK\n");
 #endif
         char buffer[0x100];
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[G1]\n");
+#endif
         uint32 sig = ReadInt32(&info, false);
 
         if (sig != RSDK_SIGNATURE_CFG) {
             CloseFile(&info);
             return;
         }
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[G2]\n");
+#endif
 
         ReadString(&info, gameVerInfo.gameTitle);
         if (!useDataPack)
