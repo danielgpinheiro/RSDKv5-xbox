@@ -1133,10 +1133,16 @@ void RSDK::LoadGameConfig()
 #endif
 
         uint8 sfxCnt = ReadInt8(&info);
+#if RETRO_PLATFORM == RETRO_XBOX
+        debugPrint("[G4a]%d\n", sfxCnt);
+#endif
         for (int32 i = 0; i < sfxCnt; ++i) {
             ReadString(&info, buffer);
             uint8 maxConcurrentPlays = ReadInt8(&info);
             LoadSfx(buffer, maxConcurrentPlays, SCOPE_GLOBAL);
+#if RETRO_PLATFORM == RETRO_XBOX
+            debugPrint("[G4b]%d\n", i);
+#endif
         }
 #if RETRO_PLATFORM == RETRO_XBOX
         debugPrint("[G5]\n");
