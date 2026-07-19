@@ -89,6 +89,12 @@ void RSDK::AllocateStorage(void **dataPtr, uint32 size, StorageDataSets dataSet,
     uint32 **data = (uint32 **)dataPtr;
     *data         = NULL;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    static int32 musAllocId = 0;
+    if (dataSet == DATASET_MUS)
+        debugPrint("M%d(sz%d) ", musAllocId++, (int)size);
+#endif
+
     if ((uint32)dataSet < DATASET_MAX) {
         // Align allocation to prevent unaligned memory accesses later on.
         const uint32 size_aligned = size & -(int32)sizeof(void *);
