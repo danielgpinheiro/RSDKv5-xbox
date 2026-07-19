@@ -84,30 +84,9 @@ static int SCREEN_HEIGHT;
 
 void SetXboxResolution()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] SetXboxResolution: starting\n");
-#endif
-    SCREEN_WIDTH  = 1280;
-    SCREEN_HEIGHT = 720;
-    if (XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT) == false) {
-        SCREEN_WIDTH  = 640;
-        SCREEN_HEIGHT = 480;
-        if (XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT) == false) {
-            VIDEO_MODE xmode;
-            void *p = NULL;
-            while (XVideoListModes(&xmode, 0, 0, &p)) {
-                if (xmode.width == 1080)
-                    continue;
-                if (xmode.width == 720)
-                    continue;
-                XVideoSetMode(xmode.width, xmode.height, xmode.bpp, xmode.refresh);
-                break;
-            }
-
-            SCREEN_WIDTH  = xmode.width;
-            SCREEN_HEIGHT = xmode.height;
-        }
-    }
+    SCREEN_WIDTH  = 640;
+    SCREEN_HEIGHT = 480;
+    XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
 #if RETRO_PLATFORM == RETRO_XBOX
     debugPrint("[RSDK] SetXboxResolution: %dx%d\n", SCREEN_WIDTH, SCREEN_HEIGHT);
 #endif
