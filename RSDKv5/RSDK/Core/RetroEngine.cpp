@@ -1139,7 +1139,9 @@ void RSDK::LoadGameConfig()
         for (int32 i = 0; i < sfxCnt; ++i) {
             ReadString(&info, buffer);
             uint8 maxConcurrentPlays = ReadInt8(&info);
+#if RETRO_PLATFORM != RETRO_XBOX
             LoadSfx(buffer, maxConcurrentPlays, SCOPE_GLOBAL);
+#endif
 #if RETRO_PLATFORM == RETRO_XBOX
             debugPrint("[G4b]%d\n", i);
 #endif
