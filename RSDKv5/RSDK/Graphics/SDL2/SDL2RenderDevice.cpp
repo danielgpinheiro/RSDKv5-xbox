@@ -141,34 +141,26 @@ void RenderDevice::FlipScreen()
         if (xmode.bpp != 32)
             XVideoSetMode(xmode.width, xmode.height, 32, REFRESH_DEFAULT);
 
-        // Fill black (pillarbox/letterbox)
-        for (int32 i = 0; i < xmode.width * xmode.height; i++)
-            fb[i] = 0xFF000000;
-
         // Blit frame buffer (game content) — RGB565 → XRGB8888
-        // Centered, integer-scaled to fit, no stretching
+        // Full-screen nearest-neighbor, no crop, minimal stretch
+        // Vertical: 240→480 = 2x (perfect). Horizontal: 424→640 = ~1.5x
         uint16 *src  = screens[0].frameBuffer;
         int32 srcW   = screens[0].size.x;
         int32 srcH   = SCREEN_YSIZE;
         int32 fbW    = xmode.width;
         int32 fbH    = xmode.height;
-        int32 scale  = (fbW / srcW) < (fbH / srcH) ? (fbW / srcW) : (fbH / srcH);
-        if (scale < 1) scale = 1;
-        int32 drawW  = srcW * scale;
-        int32 drawH  = srcH * scale;
-        int32 offX   = (fbW - drawW) / 2;
-        int32 offY   = (fbH - drawH) / 2;
 
-        for (int32 y = 0; y < drawH; y++) {
-            int32 srcY      = y / scale;
-            uint32 *dstRow  = fb + (offY + y) * fbW + offX;
+        for (int32 y = 0; y < fbH; y++) {
+            int32 srcY      = y * srcH / fbH;
+            uint32 *dstRow  = fb + y * fbW;
             uint16 *srcRow  = src + srcY * screens[0].pitch;
-            for (int32 x = 0; x < drawW; x++) {
-                uint16 p   = srcRow[x / scale];
-                uint32 r   = ((p >> 11) & 0x1F) * 255 / 31;
-                uint32 g   = ((p >> 5)  & 0x3F) * 255 / 63;
-                uint32 b   = (p & 0x1F) * 255 / 31;
-                dstRow[x]  = 0xFF000000 | (r << 16) | (g << 8) | b;
+            for (int32 x = 0; x < fbW; x++) {
+                int32 srcX  = x * srcW / fbW;
+                uint16 p    = srcRow[srcX];
+                dstRow[x]   = 0xFF000000
+                            | ((((p >> 11) & 0x1F) * 255 / 31) << 16)
+                            | ((((p >> 5)  & 0x3F) * 255 / 63) << 8)
+                            | ((p & 0x1F) * 255 / 31);
             }
         }
 
