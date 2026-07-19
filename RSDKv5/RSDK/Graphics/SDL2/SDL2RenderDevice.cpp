@@ -149,13 +149,7 @@ void RenderDevice::FlipScreen()
             for (int32 x = 0; x < xmode.width; x++)
                 fb[y * xmode.width + x] = 0xFF000000;
 
-        // WHITE BOX SMOKE TEST — 200x200 white square in center of screen
-        int32 cx = xmode.width / 2, cy = xmode.height / 2;
-        for (int32 y = cy - 100; y < cy + 100; y++)
-            for (int32 x = cx - 100; x < cx + 100; x++)
-                fb[y * xmode.width + x] = 0xFFFFFFFF;
-
-        // Blit frame buffer over white box (game content)
+        // Blit frame buffer (game content)
         uint16 *src  = screens[0].frameBuffer;
         int32 srcW   = screens[0].size.x;
         int32 srcH   = SCREEN_YSIZE;
@@ -180,6 +174,12 @@ void RenderDevice::FlipScreen()
                 dstRow[x]  = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
+
+        // WHITE BOX SMOKE TEST — drawn AFTER game content, BEFORE dim
+        int32 cx = fbW / 2, cy = fbH / 2;
+        for (int32 y = cy - 100; y < cy + 100; y++)
+            for (int32 x = cx - 100; x < cx + 100; x++)
+                fb[y * fbW + x] = 0xFFFFFFFF;
 
         // Dim
         if (dimAmount < 1.0f) {
