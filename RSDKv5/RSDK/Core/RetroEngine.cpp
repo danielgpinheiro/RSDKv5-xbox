@@ -108,7 +108,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         InitEngine();
 #if RETRO_PLATFORM == RETRO_XBOX
         debugPrint("I\n");
-        sceneInfo.state = ENGINESTATE_LOAD;
 #endif
 #if RETRO_USE_MOD_LOADER
         // we confirmed the game actually is valid & running, lets start some callbacks
@@ -123,6 +122,7 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         if (RenderDevice::Init()) {
 #if RETRO_PLATFORM == RETRO_XBOX
             debugPrint("R%d\n", sceneInfo.state);
+            sceneInfo.state = ENGINESTATE_LOAD;
 #endif
             RenderDevice::isRunning = true;
         }
