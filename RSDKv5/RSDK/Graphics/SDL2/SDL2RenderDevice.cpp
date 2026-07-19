@@ -23,9 +23,6 @@ bool RenderDevice::Init()
     const char *gameTitle = gameVerInfo.gameTitle;
 
     SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2] Init: SDL_InitSubSystem done\n");
-#endif
 
     uint8 flags = 0;
 
@@ -34,7 +31,6 @@ bool RenderDevice::Init()
     VIDEO_MODE xmode           = XVideoGetMode();
     videoSettings.windowWidth  = xmode.width;
     videoSettings.windowHeight = xmode.height;
-    debugPrint("[SDL2] Init: XVideoGetMode=%dx%d\n", xmode.width, xmode.height);
 #else
 
 #if RETRO_PLATFORM == RETRO_ANDROID
@@ -64,10 +60,7 @@ bool RenderDevice::Init()
     // SDL xbox driver may alter display mode — re-init to ensure correct framebuffer
     window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, videoSettings.windowWidth,
                               videoSettings.windowHeight, SDL_WINDOW_SHOWN);
-    debugPrint("[SDL2] Init: SDL_CreateWindow done, window=%p\n", (void*)window);
-
     XVideoSetMode(videoSettings.windowWidth, videoSettings.windowHeight, 32, REFRESH_DEFAULT);
-    debugPrint("[SDL2] Init: XVideoSetMode re-init, XVideoGetFB=%p\n", (void*)XVideoGetFB());
 #else
     window = SDL_CreateWindow(gameTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, videoSettings.windowWidth, videoSettings.windowHeight,
                               SDL_WINDOW_ALLOW_HIGHDPI | flags);
@@ -92,18 +85,8 @@ bool RenderDevice::Init()
 #endif
 
     PrintLog(PRINT_NORMAL, "w: %d h: %d windowed: %d", videoSettings.windowWidth, videoSettings.windowHeight, videoSettings.windowed);
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2] Init: calling SetupRendering...\n");
-#endif
-    if (!SetupRendering() || !AudioDevice::Init()) {
-#if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[SDL2] Init: SetupRendering or AudioDevice::Init FAILED\n");
-#endif
+    if (!SetupRendering() || !AudioDevice::Init())
         return false;
-    }
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2] Init: SetupRendering + Audio OK\n");
-#endif
 
     InitInputDevices();
     return true;
@@ -152,44 +135,49 @@ void RenderDevice::FlipScreen()
 #if RETRO_PLATFORM == RETRO_XBOX
     {
         static int32 flipFrame;
-        debugPrint("F%d\n", flipFrame++);
+        if (flipFrame < 3) debugPrint("%d\n", flipFrame);
+        flipFrame++;
         uint32_t *fb = (uint32_t *)XVideoGetFB();
         VIDEO_MODE xmode = XVideoGetMode();
         if (!fb) return;
 
-        // Ensure 32bpp framebuffer
         if (xmode.bpp != 32)
             XVideoSetMode(xmode.width, xmode.height, 32, REFRESH_DEFAULT);
 
+        // Fill black
+        for (int32 y = 0; y < xmode.height; y++)
+            for (int32 x = 0; x < xmode.width; x++)
+                fb[y * xmode.width + x] = 0xFF000000;
+
+        // WHITE BOX SMOKE TEST — 200x200 white square in center of screen
+        int32 cx = xmode.width / 2, cy = xmode.height / 2;
+        for (int32 y = cy - 100; y < cy + 100; y++)
+            for (int32 x = cx - 100; x < cx + 100; x++)
+                fb[y * xmode.width + x] = 0xFFFFFFFF;
+
+        // Blit frame buffer over white box (game content)
         uint16 *src  = screens[0].frameBuffer;
         int32 srcW   = screens[0].size.x;
         int32 srcH   = SCREEN_YSIZE;
         int32 fbW    = xmode.width;
         int32 fbH    = xmode.height;
-
-        int32 scale = (fbW / srcW) < (fbH / srcH) ? (fbW / srcW) : (fbH / srcH);
+        int32 scale  = (fbW / srcW) < (fbH / srcH) ? (fbW / srcW) : (fbH / srcH);
         if (scale < 1) scale = 1;
-        int32 drawW = srcW * scale;
-        int32 drawH = srcH * scale;
-        int32 offX  = (fbW - drawW) / 2;
-        int32 offY  = (fbH - drawH) / 2;
+        int32 drawW  = srcW * scale;
+        int32 drawH  = srcH * scale;
+        int32 offX   = (fbW - drawW) / 2;
+        int32 offY   = (fbH - drawH) / 2;
 
-        // Fill black
-        for (int32 y = 0; y < fbH; y++)
-            for (int32 x = 0; x < fbW; x++)
-                fb[y * fbW + x] = 0xFF000000;
-
-        // Blit RGB565 → XRGB8888
         for (int32 y = 0; y < drawH; y++) {
             int32 srcY      = y / scale;
-            uint16 *srcRow  = src + srcY * screens[0].pitch;
             uint32 *dstRow  = fb + (offY + y) * fbW + offX;
+            uint16 *srcRow  = src + srcY * screens[0].pitch;
             for (int32 x = 0; x < drawW; x++) {
-                uint16 p = srcRow[x / scale];
-                uint32 r = ((p >> 11) & 0x1F) * 255 / 31;
-                uint32 g = ((p >> 5)  & 0x3F) * 255 / 63;
-                uint32 b = (p & 0x1F) * 255 / 31;
-                dstRow[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                uint16 p   = srcRow[x / scale];
+                uint32 r   = ((p >> 11) & 0x1F) * 255 / 31;
+                uint32 g   = ((p >> 5)  & 0x3F) * 255 / 63;
+                uint32 b   = (p & 0x1F) * 255 / 31;
+                dstRow[x]  = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
 
@@ -544,9 +532,6 @@ void RenderDevice::InitVertexBuffer()
 
 bool RenderDevice::InitGraphicsAPI()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2] InitGraphicsAPI: entry\n");
-#endif
     videoSettings.shaderSupport = false;
 
     viewSize.x = 0;
@@ -613,8 +598,6 @@ bool RenderDevice::InitGraphicsAPI()
 
 #if RETRO_PLATFORM == RETRO_XBOX
     // Direct framebuffer — no SDL renderer/logical size/textures
-    debugPrint("[SDL2] InitGraphicsAPI: direct framebuffer, pix=%dx%d screen=%dx%d\n",
-               (int)pixelSize.x, (int)pixelSize.y, screenWidth, videoSettings.pixHeight);
     VIDEO_MODE xmode = XVideoGetMode();
     viewSize.x = xmode.width;
     viewSize.y = xmode.height;
@@ -660,9 +643,6 @@ bool RenderDevice::InitGraphicsAPI()
     videoSettings.viewportW = 1.0 / viewSize.x;
     videoSettings.viewportH = 1.0 / viewSize.y;
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2] InitGraphicsAPI: done, viewSize=%dx%d\n", (int)viewSize.x, (int)viewSize.y);
-#endif
     return true;
 }
 
@@ -710,11 +690,6 @@ bool RenderDevice::InitShaders()
 bool RenderDevice::SetupRendering()
 {
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2] SetupRendering: entry\n");
-#endif
-#if RETRO_PLATFORM == RETRO_XBOX
-    // Direct framebuffer — no SDL renderer needed
-    debugPrint("[SDL2] SetupRendering: direct framebuffer, window=%p\n", (void*)window);
     renderer = NULL;
 #else
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
@@ -726,9 +701,6 @@ bool RenderDevice::SetupRendering()
         return false;
 #endif
     }
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2] SetupRendering: renderer created OK\n");
-#endif
 
     GetDisplays();
 
@@ -1166,10 +1138,6 @@ void RenderDevice::ProcessEvent(SDL_Event event)
 
 bool RenderDevice::ProcessEvents()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    static int32 evTick;
-    if (++evTick % 60 == 0) debugPrint("E\n");
-#endif
     SDL_Event sdlEvent;
 
     while (SDL_PollEvent(&sdlEvent)) {

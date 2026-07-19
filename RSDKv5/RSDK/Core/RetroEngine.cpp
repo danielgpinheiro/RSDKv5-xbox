@@ -106,9 +106,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         }
 
         InitEngine();
-#if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("I\n");
-#endif
 #if RETRO_USE_MOD_LOADER
         // we confirmed the game actually is valid & running, lets start some callbacks
 #if RETRO_PLATFORM == RETRO_XBOX
@@ -121,9 +118,7 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 #else
         if (RenderDevice::Init()) {
 #if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("R%d\n", sceneInfo.state);
             sceneInfo.state = ENGINESTATE_LOAD;
-            debugPrint("Z\n");
 #endif
             RenderDevice::isRunning = true;
         }
@@ -143,9 +138,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 
     while (RenderDevice::isRunning) {
         RenderDevice::ProcessEvents();
-#if RETRO_PLATFORM == RETRO_XBOX
-        { static int32 te; if (te < 3) { debugPrint("E\n"); te++; } }
-#endif
 
         if (!RenderDevice::isRunning)
             break;
@@ -154,15 +146,9 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
             RenderDevice::UpdateFPSCap();
 
             AudioDevice::FrameInit();
-#if RETRO_PLATFORM == RETRO_XBOX
-            { static int32 ta; if (ta < 3) { debugPrint("A\n"); ta++; } }
-#endif
 
 #if RETRO_REV02
             SKU::userCore->FrameInit();
-#if RETRO_PLATFORM == RETRO_XBOX
-            { static int32 tu; if (tu < 3) { debugPrint("U\n"); tu++; } }
-#endif
 
             if (SKU::userCore->CheckEnginePause())
                 continue;
@@ -312,9 +298,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
                         case 3: Legacy::v3::ProcessEngine(); break;
                     }
 #else
-#if RETRO_PLATFORM == RETRO_XBOX
-                    { static int32 ft; if (ft < 5) { debugPrint("S%d\n", sceneInfo.state); ft++; } }
-#endif
                     ProcessEngine();
 #endif
                 }
@@ -390,13 +373,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 
 void RSDK::ProcessEngine()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    static int32 lastState = -1;
-    if (sceneInfo.state != lastState)     {
-        debugPrint("P%d\n", sceneInfo.state);
-        lastState = sceneInfo.state;
-    }
-#endif
     switch (sceneInfo.state) {
         default: break;
 

@@ -746,7 +746,11 @@ void RSDK::LoadSceneAssets()
 #if RETRO_USE_MOD_LOADER
     LoadGameXML(true); // override the stage palette *somewhere* idfk
 #endif
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("[2]\n");
+#endif
 }
+
 void RSDK::LoadTileConfig(char *filepath)
 {
     FileInfo info;
