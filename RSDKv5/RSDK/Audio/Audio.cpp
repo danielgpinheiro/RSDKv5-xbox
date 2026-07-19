@@ -228,6 +228,10 @@ void RSDK::LoadStream(ChannelInfo *channel)
     if (LoadFile(&info, streamFilePath, FMODE_RB)) {
 #if RETRO_PLATFORM == RETRO_XBOX
         debugPrint("LS:2(%d) ", info.fileSize);
+        debugPrint("M[%d/%d/%d] ",
+            (int)dataStorage[DATASET_MUS].usedStorage,
+            (int)dataStorage[DATASET_MUS].entryCount,
+            (int)dataStorage[DATASET_MUS].storageLimit);
 #endif
         streamBufferSize = info.fileSize;
         streamBuffer     = NULL;
