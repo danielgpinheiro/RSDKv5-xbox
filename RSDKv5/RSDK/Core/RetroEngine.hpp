@@ -716,6 +716,9 @@ inline void SetEngineState(uint8 state)
 {
     bool32 stepOver = (sceneInfo.state & ENGINESTATE_STEPOVER) == ENGINESTATE_STEPOVER;
     sceneInfo.state = state;
+#if RETRO_PLATFORM == RETRO_XBOX
+    debugPrint("X%d\n", state);
+#endif
     if (stepOver)
         sceneInfo.state |= ENGINESTATE_STEPOVER;
 }
