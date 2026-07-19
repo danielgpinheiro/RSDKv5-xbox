@@ -88,7 +88,6 @@ void SetXboxResolution()
     SCREEN_HEIGHT = 480;
     XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] SetXboxResolution: %dx%d\n", SCREEN_WIDTH, SCREEN_HEIGHT);
 #endif
 }
 
@@ -138,26 +137,22 @@ double atof(const char *s)
 int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
 {
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] RSDK_main: entry\n");
 #endif
     RSDK::linkGameLogic = (RSDK::LogicLinkHandle)linkLogicPtr;
 
 #if RETRO_PLATFORM == RETRO_XBOX
     SetXboxResolution();
-    debugPrint("[RSDK] RSDK_main: calling InitCoreAPI\n");
 #endif
 
     RSDK::InitCoreAPI();
 
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] RSDK_main: calling RunRetroEngine\n");
 #endif
     int32 exitCode = RSDK::RunRetroEngine(argc, argv);
 
     RSDK::ReleaseCoreAPI();
 
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] RSDK_main: exit code=%d\n", exitCode);
 #endif
     return exitCode;
 }

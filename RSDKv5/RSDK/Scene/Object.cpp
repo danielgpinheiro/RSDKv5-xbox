@@ -339,7 +339,6 @@ void RSDK::InitObjects()
 
     sceneInfo.state = ENGINESTATE_REGULAR;
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[3]\n");
 #endif
 
     if (!cameraCount)

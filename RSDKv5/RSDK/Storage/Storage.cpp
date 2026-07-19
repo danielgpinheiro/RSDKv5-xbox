@@ -52,7 +52,6 @@ bool32 RSDK::InitStorage()
 
         if (dataStorage[s].memoryTable == NULL) {
 #if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("[RSDK] InitStorage: malloc failed for pool %d (limit=%d bytes)\n", s, dataStorage[s].storageLimit);
 #endif
             return false;
         }

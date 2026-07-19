@@ -262,20 +262,17 @@ void RSDK::LoadSceneFolder()
             LoadSfx(sfxPath, maxConcurrentPlays, SCOPE_STAGE);
         }
 #if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[S] sfx\n");
 #endif
         CloseFile(&info);
     }
 #if RETRO_PLATFORM == RETRO_XBOX
     else {
-        debugPrint("[S] FAIL\n");
     }
 #endif
 
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Stages/%s/16x16Tiles.gif", currentSceneFolder);
     LoadStageGIF(fullFilePath);
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[S] gif\n");
 #endif
 
 #if RETRO_USE_MOD_LOADER
@@ -726,7 +723,6 @@ void RSDK::LoadSceneAssets()
     LoadGameXML(true); // override the stage palette *somewhere* idfk
 #endif
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[2]\n");
 #endif
 }
 

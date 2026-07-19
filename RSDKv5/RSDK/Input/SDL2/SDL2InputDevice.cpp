@@ -236,23 +236,19 @@ RSDK::SKU::InputDeviceSDL *RSDK::SKU::InitSDL2InputDevice(uint32 id, SDL_GameCon
 void RSDK::SKU::InitSDL2InputAPI()
 {
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2Input] InitSDL2InputAPI: calling SDL_InitSubSystem\n");
     SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
 #else
     SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC);
 #endif
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2Input] InitSDL2InputAPI: SDL_InitSubSystem done, loading controller db\n");
 #endif
 
     char path[0x100]; 
     sprintf_s(path, sizeof(path), "%sgamecontrollerdb.txt", SKU::userFileDir);
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2Input] InitSDL2InputAPI: trying '%s'\n", path);
 #endif
     SDL_GameControllerAddMappingsFromFile(path);
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[SDL2Input] InitSDL2InputAPI: done\n");
 #endif
 }
 

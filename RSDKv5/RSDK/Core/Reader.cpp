@@ -106,18 +106,12 @@ void RSDK::DetectEngineVersion()
 
 bool32 RSDK::LoadDataPack(const char *filePath, size_t fileOffset, bool32 useBuffer)
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] LoadDataPack: trying '%s'\n", filePath);
-#endif
     MEM_ZERO(dataPacks[dataPackCount]);
     useDataPack = false;
     FileInfo info;
 
     char dataPackPath[0x100];
     sprintf_s(dataPackPath, sizeof(dataPackPath), "%s%s", SKU::userFileDir, filePath);
-#if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] LoadDataPack: full path='%s' userFileDir='%s'\n", dataPackPath, SKU::userFileDir);
-#endif
 
     InitFileInfo(&info);
     info.externalFile = true;
@@ -154,10 +148,6 @@ bool32 RSDK::LoadDataPack(const char *filePath, size_t fileOffset, bool32 useBuf
         dataPacks[dataPackCount].persistentFile = NULL;
         if (useBuffer) {
             dataPacks[dataPackCount].fileBuffer = (uint8 *)malloc(info.fileSize);
-#if RETRO_PLATFORM == RETRO_XBOX
-            debugPrint("[RSDK] LoadDataPack: malloc(%d) for fileBuffer -> %p\n", info.fileSize,
-                       (void *)dataPacks[dataPackCount].fileBuffer);
-#endif
             Seek_Set(&info, 0);
             ReadBytes(&info, dataPacks[dataPackCount].fileBuffer, info.fileSize);
         }

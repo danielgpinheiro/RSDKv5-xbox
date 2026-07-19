@@ -270,7 +270,6 @@ char buttonNames[18][8] = { "U", "D", "L", "R", "START", "SELECT", "LSTICK", "RS
 void RSDK::LoadSettingsINI()
 {
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] LoadSettingsINI: entry\n");
 #endif
     videoSettings.screenCount = 1;
     videoSettings.pixHeight   = SCREEN_YSIZE;
@@ -292,12 +291,10 @@ void RSDK::LoadSettingsINI()
     char pathBuffer[0x100];
     sprintf_s(pathBuffer, sizeof(pathBuffer), "%sSettings.ini", SKU::userFileDir);
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] LoadSettingsINI: loading '%s' platform=%d useBuffer=%d\n", pathBuffer, platform, useBuffer);
 #endif
 
     dictionary *ini = iniparser_load(pathBuffer);
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] LoadSettingsINI: iniparser_load returned %p\n", (void*)ini);
 #endif
 
     int32 defaultKeyMaps[PLAYER_COUNT + 1][KEY_MAX] = {
@@ -316,7 +313,6 @@ void RSDK::LoadSettingsINI()
 
     if (ini) {
 #if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[RSDK] LoadSettingsINI: ini loaded, reading settings...\n");
 #endif
 #if RETRO_REV02
         SKU::curSKU.language = iniparser_getint(ini, "Game:language", LANGUAGE_EN);
@@ -326,7 +322,6 @@ void RSDK::LoadSettingsINI()
 
         engine.devMenu = true;
 #if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[RSDK] LoadSettingsINI: calling LoadDataPack dataFile=%s\n", iniparser_getstring(ini, "Game:dataFile", "Data.rsdk"));
 #endif
         if (LoadDataPack(iniparser_getstring(ini, "Game:dataFile", "Data.rsdk"), 0, useBuffer))
             engine.devMenu = iniparser_getboolean(ini, "Game:devMenu", false);
@@ -507,7 +502,6 @@ void RSDK::LoadSettingsINI()
     }
     else {
 #if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[RSDK] LoadSettingsINI: ini NULL, using defaults\n");
 #endif
         videoSettings.windowed       = true;
         videoSettings.bordered       = false;
@@ -574,24 +568,20 @@ void RSDK::LoadSettingsINI()
             controller[i].keySelect.keyMap = defaultKeyMaps[i][KEY_SELECT];
         }
 #if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[RSDK] LoadSettingsINI: defaults loop done, calling SaveSettingsINI\n");
 #endif
 
         SaveSettingsINI(true);
 #if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[RSDK] LoadSettingsINI: defaults saved, calling LoadDataPack\n");
 #endif
         engine.devMenu = LoadDataPack("Data.rsdk", 0, useBuffer);
     }
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] LoadSettingsINI: done\n");
 #endif
 }
 
 void RSDK::SaveSettingsINI(bool32 writeToFile)
 {
 #if RETRO_PLATFORM == RETRO_XBOX
-    debugPrint("[RSDK] SaveSettingsINI: entry writeToFile=%d\n", writeToFile);
     return; // Xbox ISO is read-only; defaults are baked into the binary
 #endif
     // the original only saves this file on windows and "dev", consoles use "options.bin"
@@ -613,7 +603,6 @@ void RSDK::SaveSettingsINI(bool32 writeToFile)
         dictionary *ini = iniparser_load(pathBuffer);
         FileIO *file    = fOpen(pathBuffer, "wb");
 #if RETRO_PLATFORM == RETRO_XBOX
-        debugPrint("[RSDK] SaveSettingsINI: fOpen(%s) returned %p\n", pathBuffer, (void*)file);
 #endif
 
         // ================
