@@ -147,12 +147,14 @@ void RenderDevice::FlipScreen()
                 fb[y * xmode.width + x] = 0xFF000000;
 
         // Blit frame buffer (game content) — RGB565 → XRGB8888
+        // Fill the display with nearest-neighbor integer scaling
         uint16 *src  = screens[0].frameBuffer;
         int32 srcW   = screens[0].size.x;
         int32 srcH   = SCREEN_YSIZE;
         int32 fbW    = xmode.width;
         int32 fbH    = xmode.height;
-        int32 scale  = (fbW / srcW) < (fbH / srcH) ? (fbW / srcW) : (fbH / srcH);
+        int32 scale  = ((fbW + srcW - 1) / srcW) > ((fbH + srcH - 1) / srcH)
+                       ? ((fbW + srcW - 1) / srcW) : ((fbH + srcH - 1) / srcH);
         if (scale < 1) scale = 1;
         int32 drawW  = srcW * scale;
         int32 drawH  = srcH * scale;
@@ -160,15 +162,19 @@ void RenderDevice::FlipScreen()
         int32 offY   = (fbH - drawH) / 2;
 
         for (int32 y = 0; y < drawH; y++) {
-            int32 srcY      = y / scale;
-            uint32 *dstRow  = fb + (offY + y) * fbW + offX;
-            uint16 *srcRow  = src + srcY * screens[0].pitch;
+            int32 dstY  = offY + y;
+            if (dstY < 0 || dstY >= fbH) continue;
+            int32 srcY  = y / scale;
+            uint32 *dstRow = fb + dstY * fbW;
+            uint16 *srcRow = src + srcY * screens[0].pitch;
             for (int32 x = 0; x < drawW; x++) {
+                int32 dstX = offX + x;
+                if (dstX < 0 || dstX >= fbW) continue;
                 uint16 p   = srcRow[x / scale];
                 uint32 r   = ((p >> 11) & 0x1F) * 255 / 31;
                 uint32 g   = ((p >> 5)  & 0x3F) * 255 / 63;
                 uint32 b   = (p & 0x1F) * 255 / 31;
-                dstRow[x]  = 0xFF000000 | (r << 16) | (g << 8) | b;
+                dstRow[dstX] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
 
