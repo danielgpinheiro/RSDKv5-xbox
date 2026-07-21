@@ -61,9 +61,19 @@ RSDK_INCLUDES = -IRSDKv5 -IGame/SonicMania -IGame/SonicMania/Objects \
                 -Idependencies/all -Idependencies/all/tinyxml2 \
                 -Idependencies/all/iniparser -Idependencies/all/stb_vorbis
 
-CFLAGS   += $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK_INCLUDES)
-CXXFLAGS += -std=c++17 $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK_INCLUDES)
+RSDK_FLAGS = -fsigned-char -fpermissive
+
+CFLAGS   += $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK_INCLUDES) $(RSDK_FLAGS)
+CXXFLAGS += -std=c++17 $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK_INCLUDES) $(RSDK_FLAGS)
 
 OXDK_LIBS = $(SDL2X_LIBS)
 
 include $(OXDK_DIR)/oxdk.mk
+
+$(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini
+
+$(OUTPUT_DIR)/Data.rsdk: Data.rsdk | $(OUTPUT_DIR)
+	cp "$<" "$@"
+
+$(OUTPUT_DIR)/Settings.ini: xbox/Settings.ini | $(OUTPUT_DIR)
+	cp "$<" "$@"

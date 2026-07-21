@@ -270,5 +270,4 @@ loader/**
 *.exe
 *.pdb
 .DS_Store
-build-xbox.sh
-clean-xbox.sh
+
