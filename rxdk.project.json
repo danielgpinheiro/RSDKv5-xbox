@@ -62,7 +62,9 @@
   ],
   "libraries": [
     "libSDL2x",
+    "libSDL2x_image",
     "libSDL2x_mixer",
+    "libSDL2x_ttf",
     "libd3d8",
     "libd3dx8",
     "libdsound",
