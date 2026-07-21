@@ -16,3 +16,7 @@
 [submodule "dependencies/xbox/theora"]
 	path = dependencies/xbox/theora
 	url = https://github.com/xiph/theora.git
+[submodule "dependencies/xbox/sdl2x"]
+	path = dependencies/xbox/sdl2x
+	url = https://github.com/Team-Resurgent/RXDK-SDL2x.git
+	ignore = dirty

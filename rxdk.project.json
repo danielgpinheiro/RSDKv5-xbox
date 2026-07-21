@@ -4,7 +4,7 @@
   "configuration": "debug",
   "outputDir": "out",
   "projectReferences": [
-    "../RXDK-SDL2x/libSDL2x"
+    "dependencies/xbox/sdl2x/libSDL2x"
   ],
   "sources": [
     "RSDKv5/main.cpp",
@@ -49,8 +49,7 @@
     "dependencies/all/",
     "dependencies/all/tinyxml2/",
     "dependencies/all/iniparser/",
-    "dependencies/all/stb_vorbis/",
-    "../RXDK-SDL2x/libSDL2x/include/"
+    "dependencies/all/stb_vorbis/"
   ],
   "defines": [
     "__XBOX__",
