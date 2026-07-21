@@ -775,7 +775,9 @@ void RSDK::StartGameObjects()
     for (int32 l = 0; l < DRAWGROUP_COUNT; ++l) engine.drawGroupVisible[l] = true;
 
     SetupFunctionTables();
+
     InitGameLink();
+
     LoadGameConfig();
 }
 
@@ -1075,22 +1077,22 @@ void RSDK::LoadGameConfig()
             }
         }
 
-        for (int32 i = 0; i < PALETTE_BANK_COUNT; ++i) {
-            activeGlobalRows[i] = ReadInt16(&info);
-            for (int32 r = 0; r < 0x10; ++r) {
-                if ((activeGlobalRows[i] >> r & 1)) {
-                    for (int32 c = 0; c < 0x10; ++c) {
-                        uint8 red                      = ReadInt8(&info);
-                        uint8 green                    = ReadInt8(&info);
-                        uint8 blue                     = ReadInt8(&info);
-                        globalPalette[i][(r << 4) + c] = rgb32To16_B[blue] | rgb32To16_G[green] | rgb32To16_R[red];
-                    }
-                }
-                else {
-                    for (int32 c = 0; c < 0x10; ++c) globalPalette[i][(r << 4) + c] = 0;
+    for (int32 i = 0; i < PALETTE_BANK_COUNT; ++i) {
+        activeGlobalRows[i] = ReadInt16(&info);
+        for (int32 r = 0; r < 0x10; ++r) {
+            if ((activeGlobalRows[i] >> r & 1)) {
+                for (int32 c = 0; c < 0x10; ++c) {
+                    uint8 red                      = ReadInt8(&info);
+                    uint8 green                    = ReadInt8(&info);
+                    uint8 blue                     = ReadInt8(&info);
+                    globalPalette[i][(r << 4) + c] = rgb32To16_B[blue] | rgb32To16_G[green] | rgb32To16_R[red];
                 }
             }
+            else {
+                for (int32 c = 0; c < 0x10; ++c) globalPalette[i][(r << 4) + c] = 0;
+            }
         }
+    }
 
         uint8 sfxCnt = ReadInt8(&info);
         for (int32 i = 0; i < sfxCnt; ++i) {
