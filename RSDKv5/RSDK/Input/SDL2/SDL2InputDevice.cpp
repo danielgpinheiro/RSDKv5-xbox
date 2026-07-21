@@ -240,16 +240,10 @@ void RSDK::SKU::InitSDL2InputAPI()
 #else
     SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC);
 #endif
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
     char path[0x100]; 
     sprintf_s(path, sizeof(path), "%sgamecontrollerdb.txt", SKU::userFileDir);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     SDL_GameControllerAddMappingsFromFile(path);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 }
 
 void RSDK::SKU::ReleaseSDL2InputAPI() { SDL_QuitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC); }

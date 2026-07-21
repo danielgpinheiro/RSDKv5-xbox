@@ -24,8 +24,6 @@ RetroEngine RSDK::engine = RetroEngine();
 
 int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     ParseArguments(argc, argv);
 
     if (engine.consoleEnabled)
@@ -33,14 +31,8 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
     RenderDevice::isRunning = false;
 
     if (InitStorage()) {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         SKU::InitUserCore();
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         LoadSettingsINI();
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
 #if !RETRO_USE_ORIGINAL_CODE
         // temp fix till i properly figure out what exactly went wrong here
@@ -56,11 +48,7 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         // do it early so we can render funny little loading bar for mods
         int32 shader = videoSettings.shaderID;
         strcpy(gameVerInfo.gameTitle, "RSDK" ENGINE_V_NAME);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         if (RenderDevice::Init()) {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
             RenderDevice::isRunning   = true;
             currentScreen             = &screens[0];
             videoSettings.screenCount = 1;
@@ -102,8 +90,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         InitEngine();
 #if RETRO_USE_MOD_LOADER
         // we confirmed the game actually is valid & running, lets start some callbacks
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         videoSettings.shaderID = shader;
         RenderDevice::InitShaders();
         RenderDevice::SetWindowTitle();
@@ -361,9 +347,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 
 void RSDK::ProcessEngine()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    { static int32 lastSt; if (sceneInfo.state != lastSt) { debugPrint("P%d\n", sceneInfo.state); lastSt = sceneInfo.state; } }
-#endif
     switch (sceneInfo.state) {
         default: break;
 
@@ -664,8 +647,6 @@ void RSDK::InitEngine()
         case 5:
 #endif
             StartGameObjects();
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 #if RETRO_REV0U
             break;
 
@@ -774,8 +755,6 @@ void RSDK::StartGameObjects()
     sceneInfo.activeCategory = 0;
     sceneInfo.listPos        = 0;
     sceneInfo.state          = ENGINESTATE_LOAD;
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     sceneInfo.inEditor       = false;
     sceneInfo.debugMode      = engine.devMenu;
     devMenu.state            = DevMenu_MainMenu;
@@ -784,8 +763,6 @@ void RSDK::StartGameObjects()
 
     SetupFunctionTables();
     InitGameLink();
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     LoadGameConfig();
 }
 
@@ -1045,25 +1022,17 @@ void RSDK::LoadXMLStages(const tinyxml2::XMLElement *gameElement)
 
 void RSDK::LoadGameConfig()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     FileInfo info;
     InitFileInfo(&info);
 
     if (LoadFile(&info, "Data/Game/GameConfig.bin", FMODE_RB)) {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         char buffer[0x100];
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         uint32 sig = ReadInt32(&info, false);
 
         if (sig != RSDK_SIGNATURE_CFG) {
             CloseFile(&info);
             return;
         }
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
         ReadString(&info, gameVerInfo.gameTitle);
         if (!useDataPack)
@@ -1092,8 +1061,6 @@ void RSDK::LoadGameConfig()
                 }
             }
         }
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
         for (int32 i = 0; i < PALETTE_BANK_COUNT; ++i) {
             activeGlobalRows[i] = ReadInt16(&info);
@@ -1111,23 +1078,15 @@ void RSDK::LoadGameConfig()
                 }
             }
         }
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
         uint8 sfxCnt = ReadInt8(&info);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         for (int32 i = 0; i < sfxCnt; ++i) {
             ReadString(&info, buffer);
             uint8 maxConcurrentPlays = ReadInt8(&info);
 #if RETRO_PLATFORM != RETRO_XBOX
             LoadSfx(buffer, maxConcurrentPlays, SCOPE_GLOBAL);
 #endif
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         }
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
         uint16 totalSceneCount = ReadInt16(&info);
 
@@ -1164,8 +1123,6 @@ void RSDK::LoadGameConfig()
             AllocateStorage((void **)&sceneInfo.listData, sizeof(SceneListEntry) * totalSceneCount, DATASET_STG, false);
 #endif
         }
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
         sceneInfo.categoryCount = ReadInt8(&info);
         sceneInfo.listPos       = 0;
@@ -1180,8 +1137,6 @@ void RSDK::LoadGameConfig()
         sceneInfo.listCategory = listCategory.data();
 #else
         AllocateStorage((void **)&sceneInfo.listCategory, sizeof(SceneListInfo) * categoryCount, DATASET_STG, false);
-#endif
-#if RETRO_PLATFORM == RETRO_XBOX
 #endif
         sceneInfo.listPos = 0;
 
@@ -1246,8 +1201,6 @@ void RSDK::LoadGameConfig()
 
 void RSDK::InitGameLink()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 #if RETRO_USE_MOD_LOADER
     objectClassCount = 0;
     memset(globalObjectIDs, 0, sizeof(globalObjectIDs));
@@ -1376,12 +1329,8 @@ void RSDK::InitGameLink()
                 PrintLog(PRINT_NORMAL, "ERROR: Failed to link game logic!");
         }
         else {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 #if RETRO_REV02
             linkGameLogic(&info);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 #else
         linkGameLogic(info);
 #endif

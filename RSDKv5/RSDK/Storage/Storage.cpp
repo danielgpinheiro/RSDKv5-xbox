@@ -51,8 +51,6 @@ bool32 RSDK::InitStorage()
         dataStorage[s].memoryTable = (uint32 *)malloc(dataStorage[s].storageLimit);
 
         if (dataStorage[s].memoryTable == NULL) {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
             return false;
         }
     }

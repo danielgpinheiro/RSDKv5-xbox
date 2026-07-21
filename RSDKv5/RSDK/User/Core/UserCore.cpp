@@ -269,8 +269,6 @@ char buttonNames[18][8] = { "U", "D", "L", "R", "START", "SELECT", "LSTICK", "RS
 
 void RSDK::LoadSettingsINI()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     videoSettings.screenCount = 1;
     videoSettings.pixHeight   = SCREEN_YSIZE;
     videoSettings.windowState = WINDOWSTATE_UNINITIALIZED;
@@ -290,12 +288,8 @@ void RSDK::LoadSettingsINI()
 
     char pathBuffer[0x100];
     sprintf_s(pathBuffer, sizeof(pathBuffer), "%sSettings.ini", SKU::userFileDir);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
     dictionary *ini = iniparser_load(pathBuffer);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
     int32 defaultKeyMaps[PLAYER_COUNT + 1][KEY_MAX] = {
         { KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING, KEYMAP_NO_MAPPING,
@@ -312,8 +306,6 @@ void RSDK::LoadSettingsINI()
     };
 
     if (ini) {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 #if RETRO_REV02
         SKU::curSKU.language = iniparser_getint(ini, "Game:language", LANGUAGE_EN);
 #else
@@ -321,8 +313,6 @@ void RSDK::LoadSettingsINI()
 #endif
 
         engine.devMenu = true;
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         if (LoadDataPack(iniparser_getstring(ini, "Game:dataFile", "Data.rsdk"), 0, useBuffer))
             engine.devMenu = iniparser_getboolean(ini, "Game:devMenu", false);
 
@@ -501,8 +491,6 @@ void RSDK::LoadSettingsINI()
         iniparser_freedict(ini);
     }
     else {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         videoSettings.windowed       = true;
         videoSettings.bordered       = false;
         videoSettings.exclusiveFS    = true;
@@ -567,16 +555,10 @@ void RSDK::LoadSettingsINI()
             controller[i].keyStart.keyMap  = defaultKeyMaps[i][KEY_START];
             controller[i].keySelect.keyMap = defaultKeyMaps[i][KEY_SELECT];
         }
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
         SaveSettingsINI(true);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         engine.devMenu = LoadDataPack("Data.rsdk", 0, useBuffer);
     }
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 }
 
 void RSDK::SaveSettingsINI(bool32 writeToFile)
@@ -602,8 +584,6 @@ void RSDK::SaveSettingsINI(bool32 writeToFile)
 
         dictionary *ini = iniparser_load(pathBuffer);
         FileIO *file    = fOpen(pathBuffer, "wb");
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
         // ================
         // SIGNATURE

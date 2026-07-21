@@ -561,14 +561,12 @@ extern "C" {
 #endif
 
 #if RETRO_PLATFORM == RETRO_XBOX
-#include <hal/debug.h>
-#include <hal/video.h>
-#include <windows.h>
-#include <stdbool.h>
-#include <hal/xbox.h>
+#define DISABLE_THEORA_VIDEO
 #endif
 
+#ifndef DISABLE_THEORA_VIDEO
 #include <theora/theoradec.h>
+#endif
 
 // ============================
 // ENGINE INCLUDES

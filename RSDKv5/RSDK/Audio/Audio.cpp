@@ -330,8 +330,6 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
     GEN_HASH_MD5(filename, hash);
 
     if (LoadFile(&info, fullFilePath, FMODE_RB)) {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         HASH_COPY_MD5(sfxList[slot].hash, hash);
         sfxList[slot].scope              = scope;
         sfxList[slot].maxConcurrentPlays = plays;
@@ -434,8 +432,6 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
     }
 #if !RETRO_USE_ORIGINAL_CODE
     else {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         PrintLog(PRINT_ERROR, "Unable to open sfx: %s", filename);
     }
 #endif

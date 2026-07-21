@@ -26,13 +26,6 @@ bool RenderDevice::Init()
 
     uint8 flags = 0;
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    videoSettings.windowed     = false;
-    VIDEO_MODE xmode           = XVideoGetMode();
-    videoSettings.windowWidth  = xmode.width;
-    videoSettings.windowHeight = xmode.height;
-#else
-
 #if RETRO_PLATFORM == RETRO_ANDROID
     videoSettings.windowed = false;
     SDL_DisplayMode dm;
@@ -50,28 +43,24 @@ bool RenderDevice::Init()
     videoSettings.windowWidth  = 1920;
     videoSettings.windowHeight = 1080;
     flags |= SDL_WINDOW_FULLSCREEN;
+#elif RETRO_PLATFORM == RETRO_XBOX
+    videoSettings.windowed     = false;
+    videoSettings.windowWidth  = 640;
+    videoSettings.windowHeight = 480;
+    flags |= SDL_WINDOW_FULLSCREEN;
 #endif
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     SDL_SetHint(SDL_HINT_RENDER_VSYNC, videoSettings.vsync ? "1" : "0");
-#endif
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    // SDL xbox driver may alter display mode — re-init to ensure correct framebuffer
-    window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, videoSettings.windowWidth,
-                              videoSettings.windowHeight, SDL_WINDOW_SHOWN);
-    XVideoSetMode(videoSettings.windowWidth, videoSettings.windowHeight, 32, REFRESH_DEFAULT);
-#else
     window = SDL_CreateWindow(gameTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, videoSettings.windowWidth, videoSettings.windowHeight,
                               SDL_WINDOW_ALLOW_HIGHDPI | flags);
-#endif
 
     if (!window) {
         PrintLog(PRINT_NORMAL, "ERROR: failed to create window!");
         return false;
     }
 
-#if RETRO_PLATFORM != RETRO_XBOX
     if (!videoSettings.windowed) {
         SDL_RestoreWindow(window);
         SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -82,7 +71,6 @@ bool RenderDevice::Init()
         SDL_RestoreWindow(window);
         SDL_SetWindowBordered(window, SDL_FALSE);
     }
-#endif
 
     PrintLog(PRINT_NORMAL, "w: %d h: %d windowed: %d", videoSettings.windowWidth, videoSettings.windowHeight, videoSettings.windowed);
     if (!SetupRendering() || !AudioDevice::Init())
@@ -94,9 +82,6 @@ bool RenderDevice::Init()
 
 void RenderDevice::CopyFrameBuffer()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    return; // Direct framebuffer — no SDL textures, read screen[s].frameBuffer directly in FlipScreen
-#endif
     int32 pitch    = 0;
     uint16 *pixels = NULL;
 
@@ -125,96 +110,11 @@ void RenderDevice::FlipScreen()
 
     float dimAmount = videoSettings.dimMax * videoSettings.dimPercent;
 
-#if RETRO_PLATFORM != RETRO_XBOX
     // Clear the screen. This is needed to keep the
     // pillarboxes in fullscreen from displaying garbage data.
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF);
     SDL_RenderClear(renderer);
-#endif
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    {
-        uint32_t *fb = (uint32_t *)XVideoGetFB();
-        VIDEO_MODE xmode = XVideoGetMode();
-        if (!fb) return;
-
-        if (xmode.bpp != 32)
-            XVideoSetMode(xmode.width, xmode.height, 32, REFRESH_DEFAULT);
-
-        // --- Static lookup tables (computed once) ---
-        static uint8 r5[32], g6[64], b5[32];
-        static int32 srcX_remap[640];
-        static bool  lutsReady = false;
-        static int32 lastFbW   = 0;
-
-        if (!lutsReady) {
-            for (int32 i = 0; i < 32; i++) r5[i] = (uint8)(i * 255 / 31);
-            for (int32 i = 0; i < 64; i++) g6[i] = (uint8)(i * 255 / 63);
-            for (int32 i = 0; i < 32; i++) b5[i] = (uint8)(i * 255 / 31);
-        }
-
-        // --- Game framebuffer params ---
-        uint16 *src = screens[0].frameBuffer;
-        int32 srcW  = screens[0].size.x;
-        int32 srcH  = SCREEN_YSIZE;
-        int32 fbW   = xmode.width;
-        int32 fbH   = xmode.height;
-        int32 pitch = screens[0].pitch;
-        int32 scaleY = fbH / srcH; if (scaleY < 1) scaleY = 1;
-        int32 drawH = srcH * scaleY;
-        int32 offY  = (fbH - drawH) / 2;
-
-        // --- Precompute srcX remap (avoids x*srcW/fbW per pixel) ---
-        if (!lutsReady || lastFbW != fbW) {
-            for (int32 x = 0; x < fbW; x++)
-                srcX_remap[x] = x * srcW / fbW;
-            lastFbW = fbW;
-            lutsReady = true;
-        }
-
-        // --- Precompute dim multiplier (0-256 range, use shift>>8 instead of /255) ---
-        uint32 dimMul = (uint32)(dimAmount * 256.0f);
-
-        // --- Single-pass fill, blit, and dim ---
-        for (int32 y = 0; y < fbH; y++) {
-            uint32 *dstRow = fb + y * fbW;
-
-            if (y >= offY && y < offY + drawH) {
-                uint16 *srcRow = src + ((y - offY) / scaleY) * pitch;
-
-                if (dimMul >= 256) {
-                    for (int32 x = 0; x < fbW; x++) {
-                        uint16 p = srcRow[srcX_remap[x]];
-                        dstRow[x] = 0xFF000000
-                                  | ((uint32)r5[(p >> 11) & 0x1F] << 16)
-                                  | ((uint32)g6[(p >> 5)  & 0x3F] << 8)
-                                  | ((uint32)b5[p & 0x1F]);
-                    }
-                }
-                else if (dimMul > 0) {
-                    for (int32 x = 0; x < fbW; x++) {
-                        uint16 p = srcRow[srcX_remap[x]];
-                        dstRow[x] = 0xFF000000
-                                  | ((((uint32)r5[(p >> 11) & 0x1F] * dimMul) >> 8) << 16)
-                                  | ((((uint32)g6[(p >> 5)  & 0x3F] * dimMul) >> 8) << 8)
-                                  | ((((uint32)b5[p & 0x1F] * dimMul) >> 8));
-                    }
-                }
-                else {
-                    for (int32 x = 0; x < fbW; x++)
-                        dstRow[x] = 0xFF000000;
-                }
-            }
-            else {
-                for (int32 x = 0; x < fbW; x++)
-                    dstRow[x] = 0xFF000000;
-            }
-        }
-
-        XVideoFlushFB();
-    }
-    return;
-#else
 #if (SDL_COMPILEDVERSION >= SDL_VERSIONNUM(2, 0, 18))
     int32 startVert = 0;
     switch (videoSettings.screenCount) {
@@ -397,14 +297,12 @@ void RenderDevice::FlipScreen()
             break;
 #endif
     }
-#endif
     if (dimAmount < 1.0f) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF - (dimAmount * 0xFF));
         SDL_RenderFillRect(renderer, NULL);
     }
     // no change here
     SDL_RenderPresent(renderer);
-#endif
 }
 
 void RenderDevice::Release(bool32 isRefresh)
@@ -614,14 +512,6 @@ bool RenderDevice::InitGraphicsAPI()
     pixelSize.x = screens[0].size.x;
     pixelSize.y = screens[0].size.y;
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    // Direct framebuffer — no SDL renderer/logical size/textures
-    VIDEO_MODE xmode = XVideoGetMode();
-    viewSize.x = xmode.width;
-    viewSize.y = xmode.height;
-    textureSize.x = 1024.0;
-    textureSize.y = 512.0;
-#else
     SDL_RenderSetLogicalSize(renderer, videoSettings.pixWidth, SCREEN_YSIZE);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
@@ -707,17 +597,11 @@ bool RenderDevice::InitShaders()
 
 bool RenderDevice::SetupRendering()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    renderer = NULL;
-#else
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-#endif
 
     if (!renderer) {
-#if RETRO_PLATFORM != RETRO_XBOX
         PrintLog(PRINT_NORMAL, "ERROR: failed to create renderer!");
         return false;
-#endif
     }
 
     GetDisplays();

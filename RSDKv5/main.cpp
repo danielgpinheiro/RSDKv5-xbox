@@ -78,79 +78,15 @@ void android_main(struct android_app *ap)
 int32 main(int32 argc, char *argv[]) { return RSDK_main(argc, argv, (void *)LinkGameLogic); }
 #endif
 
-#if RETRO_PLATFORM == RETRO_XBOX
-static int SCREEN_WIDTH;
-static int SCREEN_HEIGHT;
-
-void SetXboxResolution()
-{
-    SCREEN_WIDTH  = 640;
-    SCREEN_HEIGHT = 480;
-    XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
-}
-
-extern "C" {
-double atof(const char *s)
-{
-    double a = 0.0;
-    int e    = 0;
-    int c;
-    while ((c = *s++) != '\0' && (c >= '0' && c <= '9'))
-        a = a * 10.0 + (c - '0');
-    if (c == '.') {
-        while ((c = *s++) != '\0' && (c >= '0' && c <= '9')) {
-            a = a * 10.0 + (c - '0');
-            e = e - 1;
-        }
-    }
-    if (c == 'e' || c == 'E') {
-        int sign = 1;
-        int i    = 0;
-        c        = *s++;
-        if (c == '+')
-            c = *s++;
-        else if (c == '-') {
-            c    = *s++;
-            sign = -1;
-        }
-        while (c >= '0' && c <= '9') {
-            i = i * 10 + (c - '0');
-            c = *s++;
-        }
-        e += i * sign;
-    }
-    while (e > 0) {
-        a *= 10.0;
-        --e;
-    }
-    while (e < 0) {
-        a *= 0.1;
-        ++e;
-    }
-    return a;
-}
-}
-#endif
-
 int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     RSDK::linkGameLogic = (RSDK::LogicLinkHandle)linkLogicPtr;
-
-#if RETRO_PLATFORM == RETRO_XBOX
-    SetXboxResolution();
-#endif
 
     RSDK::InitCoreAPI();
 
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     int32 exitCode = RSDK::RunRetroEngine(argc, argv);
 
     RSDK::ReleaseCoreAPI();
 
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     return exitCode;
 }

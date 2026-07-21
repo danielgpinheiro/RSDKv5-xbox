@@ -1,3 +1,4 @@
+#ifndef DISABLE_THEORA_VIDEO
 #include "RSDK/Core/RetroEngine.hpp"
 
 using namespace RSDK;
@@ -284,3 +285,4 @@ void RSDK::ProcessVideo()
 #endif
     }
 }
+#endif
