@@ -1,5 +1,6 @@
-#ifndef DISABLE_THEORA_VIDEO
 #include "RSDK/Core/RetroEngine.hpp"
+
+#ifndef DISABLE_THEORA_VIDEO
 
 using namespace RSDK;
 
