@@ -3,9 +3,6 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
-#define NT_INCLUDED
-#include <windef.h>
-#include <d3d8.h>
 
 int _fltused = 0x9875;
 
@@ -38,19 +35,5 @@ unsigned long long __aulldvrm(unsigned long long a, unsigned long long b) { retu
 long long __alldvrm(long long a, long long b) { return (b) ? (a % b) : 0; }
 
 __asm__(".section .eh_frame,\"a\"\n.balign 4\n.global ___eh_frame_start\n___eh_frame_start:\n.global ___eh_frame_end\n___eh_frame_end:\n.text");
-
-/* D3D stdcall wrappers: use __asm__(".def ...") or aliases */
-/* These need exact ASM name control. Using __asm__ labels: */
-
-__asm__(".globl _D3DDevice_CreateTexture2@28\n"
-        ".set _D3DDevice_CreateTexture2@28, D3DDevice_CreateTexture@28\n");
-__asm__(".globl _D3DDevice_CreateVertexBuffer2@4\n"
-        ".set _D3DDevice_CreateVertexBuffer2@4, D3DDevice_CreateVertexBuffer@4\n");
-__asm__(".globl _D3DDevice_GetRenderTarget2@0\n"
-        ".set _D3DDevice_GetRenderTarget2@0, D3DDevice_GetRenderTarget@0\n");
-__asm__(".globl _D3DTexture_GetSurfaceLevel2@8\n"
-        ".set _D3DTexture_GetSurfaceLevel2@8, D3DTexture_GetSurfaceLevel@8\n");
-__asm__(".globl _D3DVertexBuffer_Lock2@8\n"
-        ".set _D3DVertexBuffer_Lock2@8, D3DVertexBuffer_Lock@8\n");
 
 #endif
