@@ -112,9 +112,9 @@ void DummyCore::LaunchManual()
     // LaunchManual() just opens the mania manual URL, thats it
 #if (RETRO_RENDERDEVICE_SDL2 || RETRO_AUDIODEVICE_SDL2 || RETRO_INPUTDEVICE_SDL2)
 
-#if (SDL_COMPILEDVERSION >= SDL_VERSIONNUM(2, 0, 14))
+#if (SDL_COMPILEDVERSION >= SDL_VERSIONNUM(2, 0, 14)) && !defined(__XBOX__)
     SDL_OpenURL("http://www.sonicthehedgehog.com/mania/manual");
-#else
+#elif !defined(__XBOX__)
     PrintLog(PRINT_NORMAL, "EMPTY LaunchManual()");
 #endif
 
