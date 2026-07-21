@@ -4,6 +4,8 @@
 #include <Windows.h>
 
 #undef PRINT_ERROR // causes conflicts
+#elif RETRO_PLATFORM == RETRO_XBOX
+#include <xtl.h>
 #endif
 #if RETRO_PLATFORM == RETRO_ANDROID
 #include <android/log.h>
@@ -81,7 +83,7 @@ void RSDK::PrintLog(int32 mode, const char *message, ...)
             PrintConsole(outputString);
         }
         else {
-#if RETRO_PLATFORM == RETRO_WIN
+#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
             OutputDebugStringA(outputString);
 #elif RETRO_PLATFORM == RETRO_ANDROID
             int32 as = ANDROID_LOG_INFO;

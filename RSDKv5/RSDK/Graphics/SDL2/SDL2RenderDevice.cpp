@@ -48,6 +48,7 @@ bool RenderDevice::Init()
     videoSettings.windowWidth  = 640;
     videoSettings.windowHeight = 480;
     flags |= SDL_WINDOW_FULLSCREEN;
+    PrintLog(PRINT_NORMAL, "[XBOX] SDL2 render: %dx%d fullscreen", videoSettings.windowWidth, videoSettings.windowHeight);
 #endif
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
@@ -61,6 +62,8 @@ bool RenderDevice::Init()
         return false;
     }
 
+    PrintLog(PRINT_NORMAL, "[XBOX] SDL window created");
+
     if (!videoSettings.windowed) {
         SDL_RestoreWindow(window);
         SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -73,9 +76,12 @@ bool RenderDevice::Init()
     }
 
     PrintLog(PRINT_NORMAL, "w: %d h: %d windowed: %d", videoSettings.windowWidth, videoSettings.windowHeight, videoSettings.windowed);
-    if (!SetupRendering() || !AudioDevice::Init())
+    if (!SetupRendering() || !AudioDevice::Init()) {
+        PrintLog(PRINT_NORMAL, "ERROR: SetupRendering or AudioDevice::Init failed!");
         return false;
+    }
 
+    PrintLog(PRINT_NORMAL, "[XBOX] RenderDevice::Init complete");
     InitInputDevices();
     return true;
 }
