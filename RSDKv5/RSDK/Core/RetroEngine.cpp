@@ -522,7 +522,9 @@ void RSDK::ProcessEngine()
 
         case ENGINESTATE_VIDEOPLAYBACK:
             ProcessInput();
+#ifndef DISABLE_THEORA_VIDEO
             ProcessVideo();
+#endif
             break;
 
         case ENGINESTATE_SHOWIMAGE:

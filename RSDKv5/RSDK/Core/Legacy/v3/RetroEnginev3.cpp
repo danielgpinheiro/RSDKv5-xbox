@@ -242,7 +242,9 @@ void RSDK::Legacy::v3::ProcessEngine()
 
         case ENGINE_VIDEOWAIT:
             ProcessInput();
+#ifndef DISABLE_THEORA_VIDEO
             ProcessVideo();
+#endif
             break;
 
         case ENGINE_PAUSE: break;
