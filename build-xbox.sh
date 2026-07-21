@@ -12,6 +12,12 @@ fi
 
 export PATH="$LLVM_BIN:$PATH"
 
+CXBE="dependencies/xbox/oxdk/tools/cxbe/cxbe"
+if [ ! -f "$CXBE" ]; then
+  echo "Building cxbe..."
+  make -C dependencies/xbox/oxdk/tools/cxbe
+fi
+
 make "$@"
 
 XBE="bin/default.xbe"

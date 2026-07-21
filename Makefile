@@ -3,7 +3,7 @@
 # Builds the RSDKv5 decomp against the Xbox XDK via clang/lld.
 # Set OXDK_DIR to your OXDK checkout and XDK_DIR to your XDK libs/headers.
 
-OXDK_DIR ?= ../OXDK
+OXDK_DIR ?= dependencies/xbox/oxdk
 XBE_TITLE = RSDKv5
 XBE_MODE  = DEBUG
 

@@ -4,3 +4,6 @@
 [submodule "dependencies/all/stb_vorbis"]
 	path = dependencies/all/stb_vorbis
 	url = https://github.com/nothings/stb
+[submodule "dependencies/xbox/oxdk"]
+	path = dependencies/xbox/oxdk
+	url = https://github.com/MrMilenko/OXDK.git
