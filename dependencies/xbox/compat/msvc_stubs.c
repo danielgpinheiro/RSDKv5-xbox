@@ -3,6 +3,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <windef.h>
 #include <d3d8.h>
 
 int _fltused = 0x9875;
