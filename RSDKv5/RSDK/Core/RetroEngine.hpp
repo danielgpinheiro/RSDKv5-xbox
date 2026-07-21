@@ -2,11 +2,16 @@
 #define RETROENGINE_H
 
 // ================
-// STANDARD LIBS
+// RXDK COMPAT
 // ================
 #if defined(__XBOX__) || defined(_XBOX)
+// char16_t/char32_t typedefs + libc++ header guards
 #include "char_types.h"
 #endif
+
+// ================
+// STANDARD LIBS
+// ================
 #include <stdio.h>
 #include <string.h>
 #include <math.h>

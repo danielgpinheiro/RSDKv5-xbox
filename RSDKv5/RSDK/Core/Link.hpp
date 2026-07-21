@@ -411,7 +411,11 @@ class Link
 {
 public:
 #if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
+#if RETRO_PLATFORM == RETRO_XBOX
+    typedef void *Handle;
+#else
     typedef HMODULE Handle;
+#endif
     // constexpr was added in C++11 this is safe don't kill me
     static constexpr const char *extention = ".dll";
     static constexpr const char *prefix    = NULL;
@@ -445,8 +449,11 @@ public:
     static inline Handle PlatformLoadLibrary(std::string path)
     {
         Handle ret;
-#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
+#if RETRO_PLATFORM == RETRO_WIN
         ret = (Handle)LoadLibraryA(path.c_str());
+#elif RETRO_PLATFORM == RETRO_XBOX
+        (void)path;
+        ret = NULL;
 #else
 #if RETRO_PLATFORM == RETRO_ANDROID
         // path should only load local libs
@@ -514,8 +521,10 @@ public:
     static inline void Close(Handle handle)
     {
         if (handle)
-#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
+#if RETRO_PLATFORM == RETRO_WIN
             FreeLibrary(handle);
+#elif RETRO_PLATFORM == RETRO_XBOX
+            (void)handle;
 #else
             dlclose(handle);
 #endif
@@ -525,8 +534,11 @@ public:
     {
         if (!handle)
             return NULL;
-#if RETRO_PLATFORM == RETRO_WIN || RETRO_PLATFORM == RETRO_XBOX
+#if RETRO_PLATFORM == RETRO_WIN
         return (void *)GetProcAddress(handle, symbol);
+#elif RETRO_PLATFORM == RETRO_XBOX
+        (void)handle; (void)symbol;
+        return NULL;
 #else
         return (void *)dlsym(handle, symbol);
 #endif

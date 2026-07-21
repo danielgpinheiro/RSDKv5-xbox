@@ -50,7 +50,7 @@
     "dependencies/all/stb_vorbis/",
     "dependencies/xbox/sdl2x/libSDL2x/include/",
     "dependencies/xbox/compat/",
-    "../../../../Library/Application Support/RXDK/zig/0.16.0/zig-aarch64-macos-0.16.0/lib/libcxx/include"
+    "../../../../Library/Application Support/RXDK/sdk/include/c++/v1"
   ],
   "defines": [
     "__XBOX__",
@@ -60,11 +60,7 @@
     "RETRO_USE_MOD_LOADER=0",
     "RSDK_AUTOBUILD",
     "MINIZ_NO_ARCHIVE_WRITING_APIS",
-    "SDL_MAIN_HANDLED",
-    "_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE",
-    "_LIBCPP_HARDENING_MODE_DEFAULT=_LIBCPP_HARDENING_MODE_NONE",
-    "_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS",
-    "_LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS"
+    "SDL_MAIN_HANDLED"
   ],
   "libraries": [
     "libSDL2x",
