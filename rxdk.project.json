@@ -3,6 +3,9 @@
   "type": "executable",
   "configuration": "debug",
   "outputDir": "out",
+  "projectReferences": [
+    "../RXDK-SDL2x/libSDL2x"
+  ],
   "sources": [
     "RSDKv5/main.cpp",
     "RSDKv5/RSDK/Core/RetroEngine.cpp",
@@ -50,14 +53,19 @@
     "../RXDK-SDL2x/libSDL2x/include/"
   ],
   "defines": [
+    "__XBOX__",
     "RETRO_STANDALONE=0",
     "RETRO_REVISION=3",
     "GAME_VERSION=6",
     "RETRO_USE_MOD_LOADER=0",
     "RSDK_AUTOBUILD",
-    "MINIZ_NO_ARCHIVE_WRITING_APIS"
+    "MINIZ_NO_ARCHIVE_WRITING_APIS",
+    "SDL_MAIN_HANDLED"
   ],
   "libraries": [
+    "libd3d8",
+    "libd3dx8",
+    "libdsound",
     "libxapi",
     "libc",
     "libcpp",
