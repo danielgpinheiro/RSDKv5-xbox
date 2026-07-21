@@ -4,10 +4,13 @@
 // ================
 // STANDARD LIBS
 // ================
+#if defined(__XBOX__) || defined(_XBOX)
+#include "char_types.h"
+#endif
 #include <stdio.h>
 #include <string.h>
-#include <cmath>
-#include <ctime>
+#include <math.h>
+#include <time.h>
 
 // ================
 // STANDARD TYPES

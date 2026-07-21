@@ -1,6 +1,8 @@
 #ifndef VIDEO_H
 #define VIDEO_H
 
+#ifndef DISABLE_THEORA_VIDEO
+
 namespace RSDK
 {
 
@@ -26,5 +28,7 @@ bool32 LoadVideo(const char *filename, double startDelay, bool32 (*skipCallback)
 void ProcessVideo();
 
 } // namespace RSDK
+
+#endif // DISABLE_THEORA_VIDEO
 
 #endif // VIDEO_H
