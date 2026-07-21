@@ -3,9 +3,7 @@
   "type": "executable",
   "configuration": "debug",
   "outputDir": "out",
-  "projectReferences": [
-    "dependencies/xbox/sdl2x/libSDL2x"
-  ],
+  "projectReferences": [],
   "sources": [
     "RSDKv5/main.cpp",
     "RSDKv5/RSDK/Core/RetroEngine.cpp",
@@ -49,7 +47,8 @@
     "dependencies/all/",
     "dependencies/all/tinyxml2/",
     "dependencies/all/iniparser/",
-    "dependencies/all/stb_vorbis/"
+    "dependencies/all/stb_vorbis/",
+    "dependencies/xbox/sdl2x/libSDL2x/include/"
   ],
   "defines": [
     "__XBOX__",
@@ -62,6 +61,8 @@
     "SDL_MAIN_HANDLED"
   ],
   "libraries": [
+    "libSDL2x",
+    "libSDL2x_mixer",
     "libd3d8",
     "libd3dx8",
     "libdsound",
