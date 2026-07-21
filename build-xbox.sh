@@ -20,12 +20,22 @@ fi
 
 make "$@"
 
+EXTRACT_XISO="/Users/danielpinheiro/Files/OriginalXbox/extract-xiso"
+ISO="RSDKv5.iso"
 XBE="bin/default.xbe"
+
 if [ -f "$XBE" ]; then
+  if [ -x "$EXTRACT_XISO" ]; then
+    echo "Generating ISO..."
+    "$EXTRACT_XISO" -c bin "$ISO"
+  else
+    echo "extract-xiso not found at $EXTRACT_XISO" >&2
+  fi
+
   XEMU="/Applications/xemu.app/Contents/MacOS/xemu"
   if [ -x "$XEMU" ]; then
     echo "Launching xemu..."
-    "$XEMU" -dvd_path "$XBE" -device lpc47m157 -serial stdio &
+    "$XEMU" -dvd_path "$ISO" -device lpc47m157 -serial stdio &
   else
     echo "xemu not found at $XEMU" >&2
   fi
