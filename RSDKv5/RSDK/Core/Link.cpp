@@ -470,7 +470,9 @@ void RSDK::SetupFunctionTables()
     ADD_RSDK_FUNCTION(FunctionTable_GetChannelPos, GetChannelPos);
 
     // Videos & "HD Images"
+#ifndef DISABLE_THEORA_VIDEO
     ADD_RSDK_FUNCTION(FunctionTable_LoadVideo, LoadVideo);
+#endif
     ADD_RSDK_FUNCTION(FunctionTable_LoadImage, LoadImage);
 
     // Input
