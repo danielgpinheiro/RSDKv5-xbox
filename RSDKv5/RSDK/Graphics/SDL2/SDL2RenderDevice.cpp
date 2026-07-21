@@ -542,7 +542,6 @@ bool RenderDevice::InitGraphicsAPI()
     if (!imageTexture)
         return false;
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-#endif
 
     lastShaderID = -1;
     InitVertexBuffer();
