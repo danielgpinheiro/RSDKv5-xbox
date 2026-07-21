@@ -297,6 +297,7 @@ void RenderDevice::FlipScreen()
             break;
 #endif
     }
+#endif
     if (dimAmount < 1.0f) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF - (dimAmount * 0xFF));
         SDL_RenderFillRect(renderer, NULL);
