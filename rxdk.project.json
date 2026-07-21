@@ -60,7 +60,16 @@
     "RETRO_USE_MOD_LOADER=0",
     "RSDK_AUTOBUILD",
     "MINIZ_NO_ARCHIVE_WRITING_APIS",
-    "SDL_MAIN_HANDLED"
+    "SDL_MAIN_HANDLED",
+    "_LIBCPP_ERRNO_H",
+    "_LIBCPP_MATH_H",
+    "_LIBCPP_STDDEF_H",
+    "_LIBCPP_STDIO_H",
+    "_LIBCPP_STDLIB_H",
+    "_LIBCPP_STRING_H",
+    "_LIBCPP_UCHAR_H",
+    "_LIBCPP_WCHAR_H",
+    "_LIBCPP_WCTYPE_H"
   ],
   "libraries": [
     "libSDL2x",
