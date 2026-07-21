@@ -1149,6 +1149,9 @@ bool32 RSDK::SKU::TrySaveUserFile(const char *filename, void *buffer, uint32 siz
 
 void RSDK::SKU::InitUserDirectory()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    PrintLog(PRINT_NORMAL, "[XBOX] InitUserDirectory start");
+#endif
 #if RETRO_PLATFORM == RETRO_OSX
 
     char buffer[0x100];
@@ -1165,6 +1168,7 @@ void RSDK::SKU::InitUserDirectory()
 
 #elif RETRO_PLATFORM == RETRO_XBOX
 
+    PrintLog(PRINT_NORMAL, "[XBOX] SetUserFileCallbacks D:\\");
     SKU::SetUserFileCallbacks("D:\\", NULL, NULL);
 
 #else

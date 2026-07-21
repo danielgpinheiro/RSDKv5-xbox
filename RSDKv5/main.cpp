@@ -78,11 +78,61 @@ void android_main(struct android_app *ap)
 int32 main(int32 argc, char *argv[]) { return RSDK_main(argc, argv, (void *)LinkGameLogic); }
 #endif
 
+#if RETRO_PLATFORM == RETRO_XBOX
+#include <xtl.h>
+
+typedef LONG NTSTATUS;
+typedef struct _STRING { USHORT Length; USHORT MaximumLength; PCHAR Buffer; } STRING, *PSTRING;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+NTSTATUS __stdcall IoCreateSymbolicLink(PSTRING SymbolicLinkName, PSTRING DeviceName);
+NTSTATUS __stdcall IoDeleteSymbolicLink(PSTRING SymbolicLinkName);
+__declspec(dllimport) extern STRING XeImageFileName;
+#ifdef __cplusplus
+}
+#endif
+
+#define CONSTANT_OBJECT_STRING(s) { sizeof(s) - sizeof(CHAR), sizeof(s), (PCHAR)(s) }
+
+static void xboxMountDrives()
+{
+    static char installPath[256];
+    int len = XeImageFileName.Length;
+    if (len > (int)sizeof(installPath) - 1)
+        len = (int)sizeof(installPath) - 1;
+    memcpy(installPath, XeImageFileName.Buffer, len);
+    installPath[len] = '\0';
+
+    char *lastSlash = strrchr(installPath, '\\');
+    if (lastSlash)
+        *lastSlash = '\0';
+
+    STRING dLetter = CONSTANT_OBJECT_STRING("\\??\\D:");
+    STRING dPath;
+    dPath.Length        = (USHORT)strlen(installPath);
+    dPath.MaximumLength = dPath.Length + 1;
+    dPath.Buffer        = installPath;
+
+    IoDeleteSymbolicLink(&dLetter);
+
+    struct { STRING drive; STRING path; } links[] = {
+        { dLetter, dPath },
+        { CONSTANT_OBJECT_STRING("\\??\\E:"), CONSTANT_OBJECT_STRING("\\Device\\Harddisk0\\Partition1") },
+    };
+    for (int i = 0; i < (int)(sizeof(links) / sizeof(links[0])); ++i)
+        IoCreateSymbolicLink(&links[i].drive, &links[i].path);
+}
+#endif
+
 int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
 {
     RSDK::linkGameLogic = (RSDK::LogicLinkHandle)linkLogicPtr;
 
 #if RETRO_PLATFORM == RETRO_XBOX
+    xboxMountDrives();
+    RSDK::PrintLog(RSDK::PRINT_NORMAL, "[XBOX] Drives mounted");
     RSDK::PrintLog(RSDK::PRINT_NORMAL, "[XBOX] RSDKv5 starting...");
 #endif
 

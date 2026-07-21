@@ -35,7 +35,13 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         PrintLog(PRINT_NORMAL, "[XBOX] InitStorage OK");
 #endif
         SKU::InitUserCore();
+#if RETRO_PLATFORM == RETRO_XBOX
+        PrintLog(PRINT_NORMAL, "[XBOX] InitUserCore OK");
+#endif
         LoadSettingsINI();
+#if RETRO_PLATFORM == RETRO_XBOX
+        PrintLog(PRINT_NORMAL, "[XBOX] LoadSettingsINI OK");
+#endif
 
 #if !RETRO_USE_ORIGINAL_CODE
         // temp fix till i properly figure out what exactly went wrong here
@@ -91,6 +97,9 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
         }
 
         InitEngine();
+#if RETRO_PLATFORM == RETRO_XBOX
+        PrintLog(PRINT_NORMAL, "[XBOX] InitEngine OK");
+#endif
 #if RETRO_USE_MOD_LOADER
         // we confirmed the game actually is valid & running, lets start some callbacks
         videoSettings.shaderID = shader;

@@ -6,6 +6,7 @@ SDL_AudioSpec AudioDevice::deviceSpec;
 
 bool32 AudioDevice::Init()
 {
+    PrintLog(PRINT_NORMAL, "[XBOX] AudioDevice::Init...");
     SDL_InitSubSystem(SDL_INIT_AUDIO);
     if (!contextInitialized) {
         contextInitialized = true;

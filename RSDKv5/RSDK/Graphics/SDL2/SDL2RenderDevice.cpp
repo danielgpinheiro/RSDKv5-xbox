@@ -603,6 +603,7 @@ bool RenderDevice::InitShaders()
 
 bool RenderDevice::SetupRendering()
 {
+    PrintLog(PRINT_NORMAL, "[XBOX] SetupRendering: creating renderer...");
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
     if (!renderer) {
@@ -610,10 +611,13 @@ bool RenderDevice::SetupRendering()
         return false;
     }
 
+    PrintLog(PRINT_NORMAL, "[XBOX] SetupRendering: renderer OK, InitGraphicsAPI...");
     GetDisplays();
 
     if (!InitGraphicsAPI() || !InitShaders())
         return false;
+
+    PrintLog(PRINT_NORMAL, "[XBOX] SetupRendering: InitGraphicsAPI OK");
 
     int32 size = videoSettings.pixWidth >= SCREEN_YSIZE ? videoSettings.pixWidth : SCREEN_YSIZE;
     scanlines  = (ScanlineInfo *)malloc(size * sizeof(ScanlineInfo));

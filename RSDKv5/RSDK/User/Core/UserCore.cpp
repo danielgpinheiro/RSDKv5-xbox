@@ -43,11 +43,18 @@ void RSDK::SKU::InitUserCore()
 {
     InitUserDirectory();
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    PrintLog(PRINT_NORMAL, "[XBOX] InitUserDirectory OK");
+#endif
+
 #if RETRO_REV02
 #if RETRO_USERCORE_DUMMY
     if (dummyCore)
         delete dummyCore;
     dummyCore = InitDummyCore();
+#if RETRO_PLATFORM == RETRO_XBOX
+    PrintLog(PRINT_NORMAL, "[XBOX] InitDummyCore OK");
+#endif
 #endif
 
     // Initalize platform-specific subsystems here
