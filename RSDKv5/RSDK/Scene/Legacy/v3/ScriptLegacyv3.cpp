@@ -3574,8 +3574,10 @@ void RSDK::Legacy::v3::ProcessScript(int32 scriptCodeStart, int32 jumpTableStart
                 break;
             case FUNC_LOADVIDEO:
                 opcodeSize = 0;
+#ifndef DISABLE_THEORA_VIDEO
                 StrAdd(scriptText, ".ogv");
                 LoadVideo(scriptText, 0.0, VideoSkipCB);
+#endif
                 break;
             case FUNC_NEXTVIDEOFRAME: opcodeSize = 0; break;
             case FUNC_PLAYSTAGESFX:
