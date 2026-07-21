@@ -48,25 +48,29 @@ SRCS  = RSDKv5/main.cpp \
 
 SRCS += $(SDL2X_SRC_LIST)
 SRCS += $(OXDK_DIR)/oxdk/libcxx-shim/libcxx_runtime.cpp
+SRCS += dependencies/xbox/stubs/math_stubs.c
 
 RSDK_DEFINES  = -DRETRO_REVISION=3 -DGAME_VERSION=6 \
                 -DRETRO_STANDALONE=0 -DRETRO_USE_MOD_LOADER=0 -DRSDK_AUTOBUILD \
                 -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_STDIO -DMINIZ_NO_TIME \
                 -DSDL_MAIN_HANDLED -D__PRFCHWINTRIN_H \
-                -D_LIBCPP_ERRNO_H -D_LIBCPP_MATH_H -D_LIBCPP_STDDEF_H \
-                -D_LIBCPP_STDIO_H -D_LIBCPP_STDLIB_H -D_LIBCPP_STRING_H \
-                -D_LIBCPP_UCHAR_H -D_LIBCPP_WCHAR_H -D_LIBCPP_WCTYPE_H
+                -Dsinf=sin -Dcosf=cos \
+                -Dfminf=fmin -Dfmaxf=fmax \
+                -Dsnprintf=_snprintf -Dvsnprintf=_vsnprintf
 
 RSDK_INCLUDES = -IRSDKv5 -IGame/SonicMania -IGame/SonicMania/Objects \
                 -Idependencies/all -Idependencies/all/tinyxml2 \
-                -Idependencies/all/iniparser -Idependencies/all/stb_vorbis
+                -Idependencies/all/iniparser -Idependencies/all/stb_vorbis \
+                -Idependencies/xbox/stubs
 
-RSDK_FLAGS = -fsigned-char -fpermissive
+RSDK_FLAGS = -fsigned-char -fpermissive -Wno-incompatible-pointer-types
 
 CFLAGS   += $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK_INCLUDES) $(RSDK_FLAGS)
 CXXFLAGS += -std=c++17 $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK_INCLUDES) $(RSDK_FLAGS)
 
 OXDK_LIBS = $(SDL2X_LIBS)
+
+LDFLAGS += /alternatename:_tanf@4=_tanf /alternatename:_asinf@4=_asinf
 
 include $(OXDK_DIR)/oxdk.mk
 

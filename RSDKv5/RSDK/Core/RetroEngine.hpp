@@ -9,6 +9,10 @@
 #include <math.h>
 #include <time.h>
 
+#ifdef __XBOX__
+#include "c99_math.h"
+#endif
+
 // ================
 // STANDARD TYPES
 // ================
@@ -100,7 +104,12 @@ enum GameRegions {
 #define RETRO_STANDARD (0)
 #define RETRO_MOBILE   (1)
 
+#ifdef __XBOX__
+#define sprintf_s(x, _, ...) _snprintf(x, _, __VA_ARGS__)
+#define vsnprintf _vsnprintf
+#else
 #define sprintf_s(x, _, ...) snprintf(x, _, __VA_ARGS__)
+#endif
 
 #if defined _WIN32 && !defined __XBOX__
 #undef sprintf_s
@@ -550,6 +559,13 @@ extern "C" {
 #endif
 
 #if RETRO_RENDERDEVICE_SDL2 || RETRO_INPUTDEVICE_SDL2 || RETRO_AUDIODEVICE_SDL2
+
+// XDK headers unconditionally #define __cdecl to empty, which breaks SDL's
+// SDLCALL macro. Undefine so __cdecl is recognized as the Clang builtin keyword.
+#ifdef __cdecl
+#undef __cdecl
+#endif
+
 #if RETRO_PLATFORM == RETRO_OSX
 // yeah, I dunno how you're meant to do the below with macOS frameworks so leaving this as is for rn :P
 #include <SDL2/SDL.h>

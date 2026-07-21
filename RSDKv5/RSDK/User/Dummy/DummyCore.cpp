@@ -110,7 +110,7 @@ bool32 DummyCore::GetConfirmButtonFlip() { return GetAPIValue(GetAPIValueID("SYS
 void DummyCore::LaunchManual()
 {
     // LaunchManual() just opens the mania manual URL, thats it
-#if (RETRO_RENDERDEVICE_SDL2 || RETRO_AUDIODEVICE_SDL2 || RETRO_INPUTDEVICE_SDL2)
+#if (RETRO_RENDERDEVICE_SDL2 || RETRO_AUDIODEVICE_SDL2 || RETRO_INPUTDEVICE_SDL2) && !defined(__XBOX__)
 
 #if (SDL_COMPILEDVERSION >= SDL_VERSIONNUM(2, 0, 14))
     SDL_OpenURL("http://www.sonicthehedgehog.com/mania/manual");

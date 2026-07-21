@@ -28,6 +28,6 @@ private:
 
     static void InitAudioChannels();
 
-    static void AudioCallback(void *data, uint8 *stream, int32 len);
+    static void SDLCALL AudioCallback(void *data, uint8 *stream, int32 len);
 };
 } // namespace RSDK

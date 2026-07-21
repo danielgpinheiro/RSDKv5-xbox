@@ -49,7 +49,7 @@ void AudioDevice::InitAudioChannels()
     AudioDeviceBase::InitAudioChannels();
 }
 
-void AudioDevice::AudioCallback(void *data, uint8 *stream, int32 len)
+void SDLCALL AudioDevice::AudioCallback(void *data, uint8 *stream, int32 len)
 {
     (void)data; // Unused
 
