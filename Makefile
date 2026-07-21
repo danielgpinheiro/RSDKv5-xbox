@@ -70,7 +70,7 @@ CXXFLAGS += -std=c++17 $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK
 
 OXDK_LIBS = $(SDL2X_LIBS) xbdm.lib
 
-LDFLAGS += /alternatename:_tanf@4=_tanf /alternatename:_asinf@4=_asinf
+LDFLAGS += /alternatename:_tanf@4=_tanf /alternatename:_asinf@4=_asinf /merge:.bss=.bss
 
 include $(OXDK_DIR)/oxdk.mk
 

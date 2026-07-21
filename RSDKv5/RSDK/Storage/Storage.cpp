@@ -30,12 +30,12 @@ bool32 RSDK::InitStorage()
 {
     // Storage limits.
 #if RETRO_PLATFORM == RETRO_XBOX
-    // Xbox has 64MB total RAM; reduce pools to fit
-    dataStorage[DATASET_STG].storageLimit = 14 * 1024 * 1024; // 14MB
-    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024;  //  4MB
-    dataStorage[DATASET_SFX].storageLimit = 10 * 1024 * 1024; // 10MB
+    // Xbox has 64MB total RAM; use minimal pools to fit CRT heap
+    dataStorage[DATASET_STG].storageLimit = 4 * 1024 * 1024;  //  4MB
+    dataStorage[DATASET_MUS].storageLimit = 2 * 1024 * 1024;  //  2MB
+    dataStorage[DATASET_SFX].storageLimit = 2 * 1024 * 1024;  //  2MB
     dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;  //  1MB
-    dataStorage[DATASET_TMP].storageLimit = 4 * 1024 * 1024;  //  4MB
+    dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024;  //  2MB
 #else
     dataStorage[DATASET_STG].storageLimit = 24 * 1024 * 1024; // 24MB
     dataStorage[DATASET_MUS].storageLimit = 8 * 1024 * 1024;  //  8MB

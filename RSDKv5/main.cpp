@@ -131,8 +131,6 @@ int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
     RSDK::linkGameLogic = (RSDK::LogicLinkHandle)linkLogicPtr;
 
 #if RETRO_PLATFORM == RETRO_XBOX
-    xboxMountDrives();
-    RSDK::PrintLog(RSDK::PRINT_NORMAL, "[XBOX] Drives mounted");
     RSDK::PrintLog(RSDK::PRINT_NORMAL, "[XBOX] RSDKv5 starting...");
 #endif
 
