@@ -38,9 +38,11 @@ bool RenderDevice::Init()
 
     videoSettings.windowed = false;
 
-    // The nxdk video driver forces fullscreen and snaps sub-720p windows to 640x480,
-    // re-asserting the display mode itself — no XVideoSetMode needed here
-    window = SDL_CreateWindow(gameVerInfo.gameTitle, 640, 480, SDL_WINDOW_FULLSCREEN);
+    // Request the mode SetXboxResolution() already established (480p or 720p) —
+    // the nxdk video driver forces fullscreen and snaps 1280x720 requests to 720p
+    // and anything smaller to 640x480, re-asserting the display mode itself
+    VIDEO_MODE vm = XVideoGetMode();
+    window        = SDL_CreateWindow(gameVerInfo.gameTitle, vm.width, vm.height, SDL_WINDOW_FULLSCREEN);
     if (!window) {
         PrintLog(PRINT_NORMAL, "ERROR: failed to create window: %s", SDL_GetError());
         return false;
@@ -327,8 +329,10 @@ bool RenderDevice::InitGraphicsAPI()
 #else
         int32 screenWidth = (int32)((viewAspect * videoSettings.pixHeight) + 3) & 0xFFFFFFFC;
 #endif
-        if (screenWidth < videoSettings.pixWidth)
-            screenWidth = videoSettings.pixWidth;
+        // Pin the internal width to pixWidth regardless of the window aspect: the
+        // logical presentation size is pixWidth x SCREEN_YSIZE, and at 720p the
+        // aspect math would yield 428, dropping INTEGER_SCALE from 3x to 2x
+        screenWidth = videoSettings.pixWidth;
 
 #if !RETRO_USE_ORIGINAL_CODE
         if (customSettings.maxPixWidth && screenWidth > customSettings.maxPixWidth)
@@ -345,10 +349,9 @@ bool RenderDevice::InitGraphicsAPI()
     pixelSize.x = screens[0].size.x;
     pixelSize.y = screens[0].size.y;
 
-    // STRETCH, not LETTERBOX: the game renders a widescreen internal res (pixWidth=424)
-    // that has always been anamorphically stretched to fill the 640x480 output on Xbox
-    // (matches the old SDL2 CPU blit) — letterboxing it squishes the picture instead
-    if (!SDL_SetRenderLogicalPresentation(renderer, videoSettings.pixWidth, SCREEN_YSIZE, SDL_LOGICAL_PRESENTATION_STRETCH))
+    // INTEGER_SCALE preserves the game's aspect ratio at every output mode:
+    // 480p -> 1x (424x240 centered), 720p -> 3x (1272x720, 4px pillars)
+    if (!SDL_SetRenderLogicalPresentation(renderer, videoSettings.pixWidth, SCREEN_YSIZE, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE))
         PrintLog(PRINT_NORMAL, "ERROR: SDL_SetRenderLogicalPresentation failed: %s", SDL_GetError());
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);

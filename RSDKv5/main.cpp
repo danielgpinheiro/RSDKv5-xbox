@@ -88,9 +88,16 @@ static int SCREEN_HEIGHT;
 
 void SetXboxResolution()
 {
-    SCREEN_WIDTH  = 640;
-    SCREEN_HEIGHT = 480;
-    XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
+    // Prefer 720p when the dashboard has it enabled (HD AV pack + 720p flag);
+    // XVideoSetMode fails otherwise, so falling back to 640x480 respects the
+    // console's video settings (same approach as LithiumX)
+    SCREEN_WIDTH  = 1280;
+    SCREEN_HEIGHT = 720;
+    if (!XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT)) {
+        SCREEN_WIDTH  = 640;
+        SCREEN_HEIGHT = 480;
+        XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
+    }
 
 #ifdef RSDK_USE_SDL3
     // Initialize pbkit NOW, before the engine allocates its storage pools.
