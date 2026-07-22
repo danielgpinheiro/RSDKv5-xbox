@@ -6,7 +6,8 @@
 	url = https://github.com/nothings/stb
 [submodule "dependencies/xbox/nxdk"]
 	path = dependencies/xbox/nxdk
-	url = https://github.com/XboxDev/nxdk
+	url = https://github.com/danielgpinheiro/nxdk
+	branch = xbox-fix
 [submodule "dependencies/xbox/vorbis"]
 	path = dependencies/xbox/vorbis
 	url = https://github.com/danielgpinheiro/vorbis
@@ -18,4 +19,5 @@
 	url = https://github.com/xiph/theora.git
 [submodule "dependencies/xbox/nxdk-sdl3"]
 	path = dependencies/xbox/nxdk-sdl3
-	url = https://github.com/Ryzee119/nxdk-sdl3
+	url = https://github.com/danielgpinheiro/nxdk-sdl3
+	branch = rsdkv5-xbox

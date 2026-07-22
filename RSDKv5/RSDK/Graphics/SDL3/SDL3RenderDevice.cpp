@@ -254,6 +254,10 @@ void RenderDevice::InitFPSCap()
 }
 bool RenderDevice::CheckFPSCap()
 {
+    // Keep the busy-wait cap: it's the only reliable pacing. The XGU present nominally
+    // blocks on vblank, but on xemu the GPU interrupt hookup is faked (pbkit
+    // KeConnectInterrupt patch), so the present may not block — without this cap the
+    // whole game runs at uncapped speed.
     curTicks = SDL_GetPerformanceCounter();
     if (curTicks >= prevTicks + targetFreq)
         return true;
@@ -341,7 +345,10 @@ bool RenderDevice::InitGraphicsAPI()
     pixelSize.x = screens[0].size.x;
     pixelSize.y = screens[0].size.y;
 
-    if (!SDL_SetRenderLogicalPresentation(renderer, videoSettings.pixWidth, SCREEN_YSIZE, SDL_LOGICAL_PRESENTATION_LETTERBOX))
+    // STRETCH, not LETTERBOX: the game renders a widescreen internal res (pixWidth=424)
+    // that has always been anamorphically stretched to fill the 640x480 output on Xbox
+    // (matches the old SDL2 CPU blit) — letterboxing it squishes the picture instead
+    if (!SDL_SetRenderLogicalPresentation(renderer, videoSettings.pixWidth, SCREEN_YSIZE, SDL_LOGICAL_PRESENTATION_STRETCH))
         PrintLog(PRINT_NORMAL, "ERROR: SDL_SetRenderLogicalPresentation failed: %s", SDL_GetError());
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -574,14 +581,27 @@ void RenderDevice::SetupImageTexture(int32 width, int32 height, uint8 *imagePixe
 }
 
 // The nxdk_xgu renderer has no YUV texture formats, so convert on the CPU (BT.601
-// integer math) into the ARGB8888 image texture. Mania's videos are 424x240-ish
-// YUV420 at 30fps — far cheaper than the old 640x480@60 CPU present blit.
+// integer math) into an RGB565 image texture — RGB565 halves the write-combined
+// texture writes vs ARGB8888 and matches the engine's own framebuffer depth.
 void RenderDevice::ConvertYUVToImageTexture(int32 width, int32 height, uint8 *yPlane, uint8 *uPlane, uint8 *vPlane, int32 strideY, int32 strideU,
                                             int32 strideV, int32 chromaShiftX, int32 chromaShiftY, uint8 format)
 {
-    // Downsample large videos (Mania.ogv is 1024x512) to <=512 wide: a full-size ARGB
-    // texture (2MB contiguous) doesn't fit in RAM, the display is only ~424x240 logical
-    // anyway, and quarter-resolution conversion is 4x cheaper on the CPU.
+    // Clamp table covering the BT.601 pre-clamp range (values land in roughly
+    // [-282, 537] for valid YUV input)
+    static uint8 clampTable[864];
+    static bool32 clampReady = false;
+    if (!clampReady) {
+        for (int32 i = 0; i < 864; ++i) {
+            int32 v      = i - 288;
+            clampTable[i] = v < 0 ? 0 : (v > 255 ? 255 : (uint8)v);
+        }
+        clampReady = true;
+    }
+    const uint8 *clamp = &clampTable[288];
+
+    // Downsample large videos (Mania.ogv is 1024x512) to <=512 wide: a full-size
+    // texture doesn't fit in RAM, the display is only ~424x240 logical anyway, and
+    // quarter-resolution conversion is 4x cheaper on the CPU.
     int32 downShift = 0;
     while ((width >> downShift) > 512) downShift++;
 
@@ -592,7 +612,7 @@ void RenderDevice::ConvertYUVToImageTexture(int32 width, int32 height, uint8 *yP
         if (imageTexture)
             SDL_DestroyTexture(imageTexture);
 
-        imageTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, texWidth, texHeight);
+        imageTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, texWidth, texHeight);
         if (!imageTexture) {
             PrintLog(PRINT_NORMAL, "ERROR: video texture %dx%d failed: %s", texWidth, texHeight, SDL_GetError());
             lastTextureFormat = -1;
@@ -608,18 +628,18 @@ void RenderDevice::ConvertYUVToImageTexture(int32 width, int32 height, uint8 *yP
         return;
 
     int32 texPitch = 0;
-    uint32 *pixels = NULL;
+    uint16 *pixels = NULL;
     if (!SDL_LockTexture(imageTexture, NULL, (void **)&pixels, &texPitch))
         return;
 
-    int32 pitch32 = texPitch >> 2;
+    int32 pitch16 = texPitch >> 1;
 
     for (int32 y = 0; y < texHeight; ++y) {
         const int32 srcY  = y << downShift;
         const uint8 *yRow = yPlane + srcY * strideY;
         const uint8 *uRow = uPlane + (srcY >> chromaShiftY) * strideU;
         const uint8 *vRow = vPlane + (srcY >> chromaShiftY) * strideV;
-        uint32 *dst       = pixels + y * pitch32;
+        uint16 *dst       = pixels + y * pitch16;
 
         for (int32 x = 0; x < texWidth; ++x) {
             const int32 srcX = x << downShift;
@@ -628,15 +648,11 @@ void RenderDevice::ConvertYUVToImageTexture(int32 width, int32 height, uint8 *yP
             int32 d = (int32)uRow[srcX >> chromaShiftX] - 128;
             int32 e = (int32)vRow[srcX >> chromaShiftX] - 128;
 
-            int32 r = (c + 409 * e + 128) >> 8;
-            int32 g = (c - 100 * d - 208 * e + 128) >> 8;
-            int32 b = (c + 516 * d + 128) >> 8;
+            uint16 r = clamp[(c + 409 * e + 128) >> 8];
+            uint16 g = clamp[(c - 100 * d - 208 * e + 128) >> 8];
+            uint16 b = clamp[(c + 516 * d + 128) >> 8];
 
-            r = r < 0 ? 0 : (r > 255 ? 255 : r);
-            g = g < 0 ? 0 : (g > 255 ? 255 : g);
-            b = b < 0 ? 0 : (b > 255 ? 255 : b);
-
-            dst[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+            dst[x] = (uint16)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
         }
     }
 

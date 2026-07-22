@@ -85,6 +85,13 @@ include $(CURDIR)/dependencies/xbox/nxdk-sdl3/config_sdl.make
 # 512KB default to reclaim contiguous RAM (every MB counts on 64MB)
 SDL3_FLAGS += -DSDL_XGU_VERTEX_BUFFER_SIZE=131072
 
+# xemu completes AC97 buffers on a coarse timer (~10/s); with SDL's default 2048-frame
+# buffers audio throughput caps at ~20kHz and everything paced by audio (music, video)
+# runs slow. 8192-frame buffers keep 10/s above the 48kHz device rate. Real hardware
+# completes per-descriptor in real time — this only adds latency there; reduce for
+# hardware-focused builds if SFX latency is noticeable.
+SDL3_FLAGS += -DSDL_XBOXAUDIO_BUFFER_FRAMES=8192
+
 CFLAGS   += $(SDL3_FLAGS)
 CXXFLAGS += $(SDL3_FLAGS)
 
