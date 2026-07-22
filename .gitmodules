@@ -16,3 +16,6 @@
 [submodule "dependencies/xbox/theora"]
 	path = dependencies/xbox/theora
 	url = https://github.com/xiph/theora.git
+[submodule "dependencies/xbox/nxdk-sdl3"]
+	path = dependencies/xbox/nxdk-sdl3
+	url = https://github.com/Ryzee119/nxdk-sdl3
