@@ -68,7 +68,9 @@ RSDK_FLAGS = -fsigned-char -fpermissive -Wno-incompatible-pointer-types
 CFLAGS   += $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK_INCLUDES) $(RSDK_FLAGS)
 CXXFLAGS += -std=c++17 $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(RSDK_DEFINES) $(RSDK_INCLUDES) $(RSDK_FLAGS)
 
-OXDK_LIBS = $(SDL2X_LIBS) xbdm.lib
+OXDK_LIBS = libcmt.lib libcpmt.lib xboxkrnl.lib \
+            d3d8.lib d3dx8.lib xgraphics.lib dsound.lib \
+            xapilib.lib xkbd.lib
 
 LDFLAGS += /alternatename:_tanf@4=_tanf /alternatename:_asinf@4=_asinf /merge:.bss=.bss
 

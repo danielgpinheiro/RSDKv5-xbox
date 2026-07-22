@@ -174,6 +174,7 @@ enum GameRegions {
 // ============================
 // RENDER DEVICE BACKENDS
 // ============================
+#define RETRO_RENDERDEVICE_DIRECTX8  (0)
 #define RETRO_RENDERDEVICE_DIRECTX9  (0)
 #define RETRO_RENDERDEVICE_DIRECTX11 (0)
 // CUSTOM
@@ -433,8 +434,8 @@ enum GameRegions {
 
 #elif RETRO_PLATFORM == RETRO_XBOX
 
-#undef RETRO_RENDERDEVICE_SDL2
-#define RETRO_RENDERDEVICE_SDL2 (1)
+#undef RETRO_RENDERDEVICE_DIRECTX8
+#define RETRO_RENDERDEVICE_DIRECTX8 (1)
 
 #undef RETRO_AUDIODEVICE_SDL2
 #define RETRO_AUDIODEVICE_SDL2 (1)
@@ -577,6 +578,9 @@ extern "C" {
 #endif
 
 #if RETRO_PLATFORM == RETRO_XBOX
+#include <xtl.h>
+#include <d3d8.h>
+#undef LoadImage
 #define DISABLE_THEORA_VIDEO
 #endif
 

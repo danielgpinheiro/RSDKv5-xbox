@@ -22,8 +22,6 @@ bool RenderDevice::Init()
 {
     const char *gameTitle = gameVerInfo.gameTitle;
 
-    SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-
     uint8 flags = 0;
 
 #if RETRO_PLATFORM == RETRO_ANDROID
@@ -64,6 +62,7 @@ bool RenderDevice::Init()
 
     PrintLog(PRINT_NORMAL, "[XBOX] SDL window created");
 
+#if RETRO_PLATFORM != RETRO_XBOX
     if (!videoSettings.windowed) {
         SDL_RestoreWindow(window);
         SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -74,12 +73,22 @@ bool RenderDevice::Init()
         SDL_RestoreWindow(window);
         SDL_SetWindowBordered(window, SDL_FALSE);
     }
+#endif
 
     PrintLog(PRINT_NORMAL, "w: %d h: %d windowed: %d", videoSettings.windowWidth, videoSettings.windowHeight, videoSettings.windowed);
+#if RETRO_PLATFORM == RETRO_XBOX
+    PrintLog(PRINT_NORMAL, "[XBOX] Calling SetupRendering & AudioDevice::Init...");
     if (!SetupRendering() || !AudioDevice::Init()) {
         PrintLog(PRINT_NORMAL, "ERROR: SetupRendering or AudioDevice::Init failed!");
         return false;
     }
+    PrintLog(PRINT_NORMAL, "[XBOX] SetupRendering & AudioDevice::Init OK");
+#else
+    if (!SetupRendering() || !AudioDevice::Init()) {
+        PrintLog(PRINT_NORMAL, "ERROR: SetupRendering or AudioDevice::Init failed!");
+        return false;
+    }
+#endif
 
     PrintLog(PRINT_NORMAL, "[XBOX] RenderDevice::Init complete");
     InitInputDevices();
@@ -107,6 +116,14 @@ void RenderDevice::CopyFrameBuffer()
 
 void RenderDevice::FlipScreen()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    /* D3D Present test: clear red, present */
+    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    SDL_RenderPresent(renderer);
+    return;
+#endif
+
     if (windowRefreshDelay > 0) {
         windowRefreshDelay--;
         if (!windowRefreshDelay)
@@ -603,7 +620,6 @@ bool RenderDevice::InitShaders()
 
 bool RenderDevice::SetupRendering()
 {
-    PrintLog(PRINT_NORMAL, "[XBOX] SetupRendering: creating renderer...");
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
     if (!renderer) {

@@ -129,7 +129,9 @@ const RenderVertex rsdkVertexBuffer[24] =
 #endif
 // clang-format on
 
-#if RETRO_RENDERDEVICE_DIRECTX9
+#if RETRO_RENDERDEVICE_DIRECTX8
+#include "DX8/DX8RenderDevice.cpp"
+#elif RETRO_RENDERDEVICE_DIRECTX9
 #include "DX9/DX9RenderDevice.cpp"
 #elif RETRO_RENDERDEVICE_DIRECTX11
 #include "DX11/DX11RenderDevice.cpp"

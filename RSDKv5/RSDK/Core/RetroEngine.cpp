@@ -103,7 +103,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 #else
         if (RenderDevice::Init()) {
 #if RETRO_PLATFORM == RETRO_XBOX
-            PrintLog(PRINT_NORMAL, "[XBOX] RenderDevice::Init OK");
             sceneInfo.state = ENGINESTATE_LOAD;
 #endif
             RenderDevice::isRunning = true;
@@ -116,10 +115,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
     }
 
     RenderDevice::InitFPSCap();
-
-#if RETRO_PLATFORM == RETRO_XBOX
-    PrintLog(PRINT_NORMAL, "[XBOX] Entering main loop");
-#endif
 
     while (RenderDevice::isRunning) {
         RenderDevice::ProcessEvents();

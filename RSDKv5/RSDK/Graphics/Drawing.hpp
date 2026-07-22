@@ -242,7 +242,9 @@ private:
     static void GetDisplays();
 };
 
-#if RETRO_RENDERDEVICE_DIRECTX9
+#if RETRO_RENDERDEVICE_DIRECTX8
+#include "DX8/DX8RenderDevice.hpp"
+#elif RETRO_RENDERDEVICE_DIRECTX9
 #include "DX9/DX9RenderDevice.hpp"
 #elif RETRO_RENDERDEVICE_DIRECTX11
 #include "DX11/DX11RenderDevice.hpp"

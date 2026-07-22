@@ -130,10 +130,6 @@ int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
 {
     RSDK::linkGameLogic = (RSDK::LogicLinkHandle)linkLogicPtr;
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    RSDK::PrintLog(RSDK::PRINT_NORMAL, "[XBOX] RSDKv5 starting...");
-#endif
-
     RSDK::InitCoreAPI();
 
     int32 exitCode = RSDK::RunRetroEngine(argc, argv);
