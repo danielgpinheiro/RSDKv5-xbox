@@ -138,6 +138,13 @@ bool32 RSDK::LoadVideo(const char *filename, double startDelay, bool32 (*skipCal
             else {
                 VideoManager::td          = th_decode_alloc(&VideoManager::ti, VideoManager::ts);
                 VideoManager::pixelFormat = VideoManager::ti.pixel_fmt;
+#if RETRO_PLATFORM == RETRO_XBOX
+                // The decoder needs ~5MB of free heap for a 1024x512 video — if this
+                // fails, the memory budget regressed (see Storage.cpp pool sizes)
+                if (!VideoManager::td)
+                    PrintLog(PRINT_NORMAL, "ERROR: th_decode_alloc failed (%dx%d) — out of memory?", VideoManager::ti.frame_width,
+                             VideoManager::ti.frame_height);
+#endif
 
                 int32 ppLevelMax = 0;
                 th_decode_ctl(VideoManager::td, TH_DECCTL_GET_PPLEVEL_MAX, &ppLevelMax, sizeof(int32));
@@ -234,16 +241,27 @@ void RSDK::ProcessVideo()
             th_decode_ycbcr_out(VideoManager::td, yuv);
 
             int32 dataPos = (VideoManager::ti.pic_x & 0xFFFFFFFE) + (VideoManager::ti.pic_y & 0xFFFFFFFE) * yuv[0].stride;
+
+#if RETRO_PLATFORM == RETRO_XBOX
+            // Theora frames are padded up to e.g. 1024x512; only convert/upload the visible
+            // picture region — RAM is too tight for a full-frame ARGB texture
+            int32 vidWidth  = (int32)VideoManager::ti.pic_width;
+            int32 vidHeight = (int32)VideoManager::ti.pic_height;
+#else
+            int32 vidWidth  = yuv[0].width;
+            int32 vidHeight = yuv[0].height;
+#endif
+
             switch (VideoManager::pixelFormat) {
                 default: break;
 
                 case TH_PF_444:
-                    RenderDevice::SetupVideoTexture_YUV444(yuv[0].width, yuv[0].height, &yuv[0].data[dataPos], &yuv[1].data[dataPos],
+                    RenderDevice::SetupVideoTexture_YUV444(vidWidth, vidHeight, &yuv[0].data[dataPos], &yuv[1].data[dataPos],
                                                            &yuv[2].data[dataPos], yuv[0].stride, yuv[1].stride, yuv[2].stride);
                     break;
 
                 case TH_PF_422:
-                    RenderDevice::SetupVideoTexture_YUV422(yuv[0].width, yuv[0].height, &yuv[0].data[dataPos],
+                    RenderDevice::SetupVideoTexture_YUV422(vidWidth, vidHeight, &yuv[0].data[dataPos],
                                                            &yuv[1].data[yuv[1].stride * VideoManager::ti.pic_y + (VideoManager::ti.pic_x >> 1)],
                                                            &yuv[2].data[yuv[1].stride * VideoManager::ti.pic_y + (VideoManager::ti.pic_x >> 1)],
                                                            yuv[0].stride, yuv[1].stride, yuv[2].stride);
@@ -251,7 +269,7 @@ void RSDK::ProcessVideo()
 
                 case TH_PF_420:
                     RenderDevice::SetupVideoTexture_YUV420(
-                        yuv[0].width, yuv[0].height, &yuv[0].data[dataPos],
+                        vidWidth, vidHeight, &yuv[0].data[dataPos],
                         &yuv[1].data[yuv[1].stride * (VideoManager::ti.pic_y >> 1) + (VideoManager::ti.pic_x >> 1)],
                         &yuv[2].data[yuv[1].stride * (VideoManager::ti.pic_y >> 1) + (VideoManager::ti.pic_x >> 1)], yuv[0].stride, yuv[1].stride,
                         yuv[2].stride);

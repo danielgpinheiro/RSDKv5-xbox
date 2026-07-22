@@ -30,12 +30,17 @@ bool32 RSDK::InitStorage()
 {
     // Storage limits.
 #if RETRO_PLATFORM == RETRO_XBOX
-    // Xbox has 64MB total RAM; reduce pools to fit
-    dataStorage[DATASET_STG].storageLimit = 14 * 1024 * 1024; // 14MB
+    // Xbox has 64MB total RAM; reduce pools to fit.
+    // Budget (measured via MmQueryStatistics): ~32.7MB available here — the XBE image
+    // (engine + Mania .bss) commits ~24MB and pbkit's framebuffers ~5MB. The SDL3 XGU
+    // renderer still needs ~4MB after this (screen textures + vertex arena + video tex).
+    // MUS must hold an entire music OGG (stage tracks reach ~4MB) + 512KB vorbis state.
+    // Theora video playback needs ~5MB of free heap on top of these pools.
+    dataStorage[DATASET_STG].storageLimit = 10 * 1024 * 1024; // 10MB
     dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024;  //  4MB
-    dataStorage[DATASET_SFX].storageLimit = 10 * 1024 * 1024; // 10MB
+    dataStorage[DATASET_SFX].storageLimit = 7 * 1024 * 1024;  //  7MB
     dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;  //  1MB
-    dataStorage[DATASET_TMP].storageLimit = 4 * 1024 * 1024;  //  4MB
+    dataStorage[DATASET_TMP].storageLimit = 3 * 1024 * 1024;  //  3MB
 #else
     dataStorage[DATASET_STG].storageLimit = 24 * 1024 * 1024; // 24MB
     dataStorage[DATASET_MUS].storageLimit = 8 * 1024 * 1024;  //  8MB
@@ -52,6 +57,7 @@ bool32 RSDK::InitStorage()
 
         if (dataStorage[s].memoryTable == NULL) {
 #if RETRO_PLATFORM == RETRO_XBOX
+            PrintLog(PRINT_NORMAL, "ERROR: failed to allocate %d MB for storage pool %d", dataStorage[s].storageLimit >> 20, s);
 #endif
             return false;
         }

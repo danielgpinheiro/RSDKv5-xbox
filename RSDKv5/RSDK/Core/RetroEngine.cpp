@@ -33,14 +33,8 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
     RenderDevice::isRunning = false;
 
     if (InitStorage()) {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         SKU::InitUserCore();
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         LoadSettingsINI();
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
 
 #if !RETRO_USE_ORIGINAL_CODE
         // temp fix till i properly figure out what exactly went wrong here
@@ -1538,13 +1532,15 @@ void RSDK::InitCoreAPI()
         diagAbortWithResult(res);
 #endif
 
-#if RETRO_RENDERDEVICE_SDL2 || RETRO_AUDIODEVICE_SDL2 || RETRO_INPUTDEVICE_SDL2
+#if RETRO_RENDERDEVICE_SDL2 || RETRO_AUDIODEVICE_SDL2 || RETRO_INPUTDEVICE_SDL2 || RETRO_RENDERDEVICE_SDL3 || RETRO_AUDIODEVICE_SDL3               \
+    || RETRO_INPUTDEVICE_SDL3
     SDL_Init(0);
 #endif
 }
 void RSDK::ReleaseCoreAPI()
 {
-#if RETRO_RENDERDEVICE_SDL2 || RETRO_AUDIODEVICE_SDL2 || RETRO_INPUTDEVICE_SDL2
+#if RETRO_RENDERDEVICE_SDL2 || RETRO_AUDIODEVICE_SDL2 || RETRO_INPUTDEVICE_SDL2 || RETRO_RENDERDEVICE_SDL3 || RETRO_AUDIODEVICE_SDL3               \
+    || RETRO_INPUTDEVICE_SDL3
     SDL_Quit();
 #endif
 

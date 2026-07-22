@@ -169,6 +169,7 @@ enum GameRegions {
 #define RETRO_RENDERDEVICE_DIRECTX11 (0)
 // CUSTOM
 #define RETRO_RENDERDEVICE_SDL2 (0)
+#define RETRO_RENDERDEVICE_SDL3 (0)
 #define RETRO_RENDERDEVICE_GLFW (0)
 #define RETRO_RENDERDEVICE_VK   (0)
 #define RETRO_RENDERDEVICE_EGL  (0)
@@ -180,6 +181,9 @@ enum GameRegions {
 // CUSTOM
 #ifndef RETRO_AUDIODEVICE_SDL2
 #define RETRO_AUDIODEVICE_SDL2 (0)
+#endif
+#ifndef RETRO_AUDIODEVICE_SDL3
+#define RETRO_AUDIODEVICE_SDL3 (0)
 #endif
 #define RETRO_AUDIODEVICE_OBOE (0)
 #ifndef RETRO_AUDIODEVICE_PORT
@@ -199,6 +203,7 @@ enum GameRegions {
 #define RETRO_INPUTDEVICE_NX       (0)
 // CUSTOM
 #define RETRO_INPUTDEVICE_SDL2   (0)
+#define RETRO_INPUTDEVICE_SDL3   (0)
 #define RETRO_INPUTDEVICE_GLFW   (0)
 #define RETRO_INPUTDEVICE_PDBOAT (0)
 
@@ -424,6 +429,19 @@ enum GameRegions {
 
 #elif RETRO_PLATFORM == RETRO_XBOX
 
+#ifdef RSDK_USE_SDL3
+
+#undef RETRO_RENDERDEVICE_SDL3
+#define RETRO_RENDERDEVICE_SDL3 (1)
+
+#undef RETRO_AUDIODEVICE_SDL3
+#define RETRO_AUDIODEVICE_SDL3 (1)
+
+#undef RETRO_INPUTDEVICE_SDL3
+#define RETRO_INPUTDEVICE_SDL3 (1)
+
+#else
+
 #undef RETRO_RENDERDEVICE_SDL2
 #define RETRO_RENDERDEVICE_SDL2 (1)
 
@@ -432,6 +450,8 @@ enum GameRegions {
 
 #undef RETRO_INPUTDEVICE_SDL2
 #define RETRO_INPUTDEVICE_SDL2 (1)
+
+#endif
 
 #undef RETRO_INPUTDEVICE_KEYBOARD
 #define RETRO_INPUTDEVICE_KEYBOARD (0)
@@ -558,6 +578,10 @@ extern "C" {
 // https://wiki.libsdl.org/FAQDevelopment#do_i_include_sdl.h_or_sdlsdl.h
 #include "SDL.h"
 #endif
+#endif
+
+#if RETRO_RENDERDEVICE_SDL3 || RETRO_INPUTDEVICE_SDL3 || RETRO_AUDIODEVICE_SDL3
+#include <SDL3/SDL.h>
 #endif
 
 #if RETRO_PLATFORM == RETRO_XBOX

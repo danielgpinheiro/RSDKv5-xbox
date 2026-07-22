@@ -79,6 +79,10 @@ int32 main(int32 argc, char *argv[]) { return RSDK_main(argc, argv, (void *)Link
 #endif
 
 #if RETRO_PLATFORM == RETRO_XBOX
+#ifdef RSDK_USE_SDL3
+#include <pbkit/pbkit.h>
+#endif
+
 static int SCREEN_WIDTH;
 static int SCREEN_HEIGHT;
 
@@ -87,6 +91,18 @@ void SetXboxResolution()
     SCREEN_WIDTH  = 640;
     SCREEN_HEIGHT = 480;
     XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
+
+#ifdef RSDK_USE_SDL3
+    // Initialize pbkit NOW, before the engine allocates its storage pools.
+    // pb_init() needs several MB of contiguous physical memory below 64MB for its
+    // framebuffers; allocating pools first fragments that region and pb_init fails
+    // with -11 inside SDL_CreateRenderer. The SDL3 XGU renderer detects the running
+    // pbkit instance (pb_init == -8) and reuses it.
+    pb_size(128 * 1024); // we submit tiny command buffers; default 512KB wastes RAM
+    int pbStatus = pb_init();
+    if (pbStatus < 0 && pbStatus != -8)
+        debugPrint("pb_init failed early: %d\n", pbStatus);
+#endif
 }
 
 extern "C" {
@@ -134,8 +150,6 @@ double atof(const char *s)
 
 int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     RSDK::linkGameLogic = (RSDK::LogicLinkHandle)linkLogicPtr;
 
 #if RETRO_PLATFORM == RETRO_XBOX
@@ -144,8 +158,6 @@ int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
 
     RSDK::InitCoreAPI();
 
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
     int32 exitCode = RSDK::RunRetroEngine(argc, argv);
 
     RSDK::ReleaseCoreAPI();

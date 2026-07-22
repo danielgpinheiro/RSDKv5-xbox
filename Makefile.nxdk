@@ -3,7 +3,8 @@ GEN_XISO = $(XBE_TITLE).iso
 NXDK_DIR = $(CURDIR)/dependencies/xbox/nxdk
 RSDKv5_DIR = $(CURDIR)/RSDKv5
 NXDK_CXX = y
-NXDK_SDL = y
+# SDL2 (NXDK built-in) — restore NXDK_SDL = y and -DRSDK_USE_SDL2 below to revert to the SDL2 backend
+# NXDK_SDL = y
 
 SRCS += \
 	$(CURDIR)/dependencies/all/tinyxml2/tinyxml2.cpp \
@@ -57,7 +58,8 @@ EXTRA_OFLAGS = \
 
 RSDK_FLAGS = \
 	-D__XBOX__ \
-	-DRSDK_USE_SDL2 \
+	-DRSDK_USE_SDL3 \
+	-DSCREEN_XMAX=640 \
 	-DRETRO_STANDALONE=0 \
 	-DRETRO_REVISION=3 \
 	-DGAME_VERSION=6 \
@@ -76,6 +78,18 @@ include $(CURDIR)/dependencies/xbox/Makefile-theora.nxdk
 
 include $(NXDK_DIR)/Makefile
 
+# SDL3 (nxdk-sdl3 submodule) — must come after the NXDK Makefile include
+include $(CURDIR)/dependencies/xbox/nxdk-sdl3/config_sdl.make
+
+# The engine draws <10 quads per frame — shrink the XGU vertex ring from its
+# 512KB default to reclaim contiguous RAM (every MB counts on 64MB)
+SDL3_FLAGS += -DSDL_XGU_VERTEX_BUFFER_SIZE=131072
+
+CFLAGS   += $(SDL3_FLAGS)
+CXXFLAGS += $(SDL3_FLAGS)
+
+main.exe: libSDL3.lib
+
 # Bundle Data.rsdk in the ISO
 $(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini
 
@@ -89,5 +103,9 @@ clean_local:
 	@echo clean ...
 	rm -Rf ./bin
 	find . -name '*.iso' -type f -delete
-	find . -name '*.obj' ! -path './dependencies/xbox/nxdk/*' -type f -delete
-	find . -name '*.d' ! -path './dependencies/xbox/nxdk/*' -type f -delete
+	find . -name '*.obj' ! -path './dependencies/xbox/nxdk/*' ! -path './dependencies/xbox/nxdk-sdl3/*' -type f -delete
+	find . -name '*.d' ! -path './dependencies/xbox/nxdk/*' ! -path './dependencies/xbox/nxdk-sdl3/*' -type f -delete
+
+clean_sdl3:
+	@echo clean SDL3 ...
+	rm -f $(SDL3_OBJS) libSDL3.lib

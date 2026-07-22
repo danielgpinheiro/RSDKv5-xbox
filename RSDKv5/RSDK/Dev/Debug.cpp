@@ -25,7 +25,22 @@ ViewableVariable RSDK::viewableVarList[VIEWVAR_LIST_COUNT];
 
 DevMenu RSDK::devMenu = DevMenu();
 
+#if RETRO_PLATFORM == RETRO_XBOX
+// Mirror log output to COM1 so it lands in xemu's -serial log (readable via `strings`)
+static inline void SerialPutc(char c) { __asm__ __volatile__("outb %0, %1" : : "a"(c), "Nd"((uint16)0x3F8)); }
+inline void PrintConsole(const char *message)
+{
+    // serial first — printf goes through DbgPrint and may not survive early boot
+    for (const char *c = message; *c; ++c) {
+        if (*c == '\n')
+            SerialPutc('\r');
+        SerialPutc(*c);
+    }
+    printf("%s", message);
+}
+#else
 inline void PrintConsole(const char *message) { printf("%s", message); }
+#endif
 
 void RSDK::PrintLog(int32 mode, const char *message, ...)
 {
@@ -77,7 +92,7 @@ void RSDK::PrintLog(int32 mode, const char *message, ...)
 #endif
         }
 #endif
-        if (engine.consoleEnabled) {
+        if (engine.consoleEnabled || RETRO_PLATFORM == RETRO_XBOX) {
             PrintConsole(outputString);
         }
         else {
