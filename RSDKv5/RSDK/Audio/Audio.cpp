@@ -473,10 +473,38 @@ void RSDK::LoadSfx(char *filename, uint8 plays, uint8 scope)
         LoadSfxToSlot(filename, id, plays, scope);
 }
 
+#if RETRO_PLATFORM == RETRO_XBOX
+// Temporary diagnosis for missing SFX on hardware: trace every PlaySfx decision
+// and inaudible-channel anomalies over serial. Toggle off once diagnosed.
+#define SFX_TRACE 1
+
+// Allow at most ~30 trace lines per second so serial stays readable
+static bool32 SfxTraceAllowed()
+{
+    static uint32 windowStart = 0;
+    static uint32 lines       = 0;
+
+    uint32 now = (uint32)SDL_GetTicks();
+    if (now - windowStart >= 1000) {
+        windowStart = now;
+        lines       = 0;
+    }
+    return ++lines <= 30;
+}
+#endif
+
 int32 RSDK::PlaySfx(uint16 sfx, uint32 loopPoint, uint32 priority)
 {
+#if SFX_TRACE
+    if (sfx >= SFX_COUNT || !sfxList[sfx].scope) {
+        if (SfxTraceAllowed())
+            PrintLog(PRINT_NORMAL, "sfxtrace: DROP id=%u (scope=%d, count=%d) not loaded", sfx, sfx < SFX_COUNT ? sfxList[sfx].scope : -1, SFX_COUNT);
+        return -1;
+    }
+#else
     if (sfx >= SFX_COUNT || !sfxList[sfx].scope)
         return -1;
+#endif
 
     uint8 count = 0;
     for (int32 c = 0; c < CHANNEL_COUNT; ++c) {
@@ -516,8 +544,23 @@ int32 RSDK::PlaySfx(uint16 sfx, uint32 loopPoint, uint32 priority)
         }
     }
 
-    if (slot == -1)
+    if (slot == -1) {
+#if SFX_TRACE
+        if (SfxTraceAllowed()) {
+            PrintLog(PRINT_NORMAL, "sfxtrace: DROP id=%u no channel (prio=%u)", sfx, priority);
+            // Dump the channel table so it's obvious what is hogging the slots
+            for (int32 c = 0; c < CHANNEL_COUNT; ++c)
+                PrintLog(PRINT_NORMAL, "sfxtrace:   ch%02d id=%d state=%d loop=%d prio=%u pos=%u/%u", c, channels[c].soundID, channels[c].state,
+                         (int32)channels[c].loop, channels[c].priority, (uint32)channels[c].bufferPos, (uint32)channels[c].sampleLength);
+        }
+#endif
         return -1;
+    }
+
+#if SFX_TRACE
+    if (SfxTraceAllowed())
+        PrintLog(PRINT_NORMAL, "sfxtrace: play id=%u slot=%d len=%u loop=%u prio=%u", sfx, slot, sfxList[sfx].length, loopPoint, priority);
+#endif
 
     LockAudioDevice();
 
@@ -544,6 +587,13 @@ int32 RSDK::PlaySfx(uint16 sfx, uint32 loopPoint, uint32 priority)
 void RSDK::SetChannelAttributes(uint8 channel, float volume, float panning, float speed)
 {
     if (channel < CHANNEL_COUNT) {
+#if SFX_TRACE
+        // Log only "inaudible" anomalies: silent volume, stopped/absurd speed, hard pan
+        if ((volume <= 0.01f || speed == 0.0f || speed > 4.0f || panning <= -0.99f || panning >= 0.99f) && SfxTraceAllowed())
+            PrintLog(PRINT_NORMAL, "sfxtrace: attr ch=%u id=%d vol=%d.%02d pan=%d.%02d spd=%d.%02d", channel, channels[channel].soundID,
+                     (int32)volume, (int32)(fabsf(volume) * 100) % 100, (int32)panning, (int32)(fabsf(panning) * 100) % 100, (int32)speed,
+                     (int32)(fabsf(speed) * 100) % 100);
+#endif
         volume                   = fminf(4.0f, volume);
         volume                   = fmaxf(0.0f, volume);
         channels[channel].volume = volume;
