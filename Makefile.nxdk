@@ -52,9 +52,13 @@ INCLUDES += \
 	-I$(CURDIR)/Game/SonicMania/Objects/
 
 EXTRA_OFLAGS = \
-	-O2 \
+	-O3 \
 	-fsigned-char \
 	-fpermissive
+
+# Emit a link map so xbwatson crash dumps can be symbolized
+# (tools: parse addresses against main.map; main.exe carries no symbol table)
+LDFLAGS += -map:$(CURDIR)/main.map
 
 RSDK_FLAGS = \
 	-D__XBOX__ \

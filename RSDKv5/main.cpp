@@ -83,31 +83,6 @@ int32 main(int32 argc, char *argv[]) { return RSDK_main(argc, argv, (void *)Link
 static int SCREEN_WIDTH;
 static int SCREEN_HEIGHT;
 
-#ifdef RSDK_USE_SDL3
-// pbkit registers its framebuffers and depth buffer as NV2A tile regions
-// (pb_assign_tile, tiles 0 and 1). xemu's display path chokes on tiled 720p
-// scanout (black screen at 16bpp, host-side GLImageWork crash at 32bpp), and
-// tiling is only a GPU memory-bandwidth optimization — clear the tile
-// registers after pb_init when running an HD mode. Mirrors pb_assign_tile's
-// three write paths (PFB, PGRAPH, PGRAPH_RDI) with disabled (zeroed) state.
-static void ClearPbkitTiles()
-{
-    for (int i = 0; i < 2; ++i) { // tile 0 = front/back buffers, tile 1 = depth-stencil
-        volatile uint32_t *pfb    = (volatile uint32_t *)(VIDEO_BASE + NV_PFB_TILE + i * 16);
-        volatile uint32_t *pgraph = (volatile uint32_t *)(VIDEO_BASE + NV_PGRAPH_TILE_XBOX + i * 16);
-
-        for (int r = 0; r < 3; ++r) { // 0 = addr+enable, 1 = tail, 2 = pitch
-            pfb[r]    = 0;
-            pgraph[r] = 0;
-
-            uint32_t rdiAddr              = ((i * 4 + 0x10 + r * 0x20) & NV_PGRAPH_RDI_INDEX_ADDRESS) | ((0xEA << 16) & NV_PGRAPH_RDI_INDEX_SELECT);
-            VIDEOREG(NV_PGRAPH_RDI_INDEX) = rdiAddr;
-            VIDEOREG(NV_PGRAPH_RDI_DATA)  = 0;
-        }
-    }
-}
-#endif
-
 void SetXboxResolution()
 {
     // Prefer 720p when the dashboard has it enabled (HD AV pack + 720p flag);
@@ -138,9 +113,6 @@ void SetXboxResolution()
     int pbStatus = pb_init();
     if (pbStatus < 0 && pbStatus != -8)
         debugPrint("pb_init failed early: %d\n", pbStatus);
-
-    if (pbStatus >= 0 && SCREEN_HEIGHT >= 720)
-        ClearPbkitTiles();
 #endif
 }
 
