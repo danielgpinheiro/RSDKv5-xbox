@@ -21,10 +21,7 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
     return RSDK_main(1, &lpCmdLine, LinkGameLogic);
 }
 #else
-INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine, INT nShowCmd)
-{
-    return RSDK_main(1, &lpCmdLine, LinkGameLogic);
-}
+INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine, INT nShowCmd) { return RSDK_main(1, &lpCmdLine, LinkGameLogic); }
 #endif
 
 #elif RETRO_PLATFORM == RETRO_ANDROID
@@ -51,7 +48,7 @@ void android_main(struct android_app *ap)
     getFD    = jni->env->GetMethodID(jni->clazz, "getFD", "([BB)I");
     writeLog = jni->env->GetMethodID(jni->clazz, "writeLog", "([BI)V");
 
-    setLoading = jni->env->GetMethodID(jni->clazz, "setLoadingIcon", "([B)V");
+    setLoading  = jni->env->GetMethodID(jni->clazz, "setLoadingIcon", "([B)V");
     showLoading = jni->env->GetMethodID(jni->clazz, "showLoadingIcon", "()V");
     hideLoading = jni->env->GetMethodID(jni->clazz, "hideLoadingIcon", "()V");
 
@@ -86,14 +83,48 @@ int32 main(int32 argc, char *argv[]) { return RSDK_main(argc, argv, (void *)Link
 static int SCREEN_WIDTH;
 static int SCREEN_HEIGHT;
 
+#ifdef RSDK_USE_SDL3
+// pbkit registers its framebuffers and depth buffer as NV2A tile regions
+// (pb_assign_tile, tiles 0 and 1). xemu's display path chokes on tiled 720p
+// scanout (black screen at 16bpp, host-side GLImageWork crash at 32bpp), and
+// tiling is only a GPU memory-bandwidth optimization — clear the tile
+// registers after pb_init when running an HD mode. Mirrors pb_assign_tile's
+// three write paths (PFB, PGRAPH, PGRAPH_RDI) with disabled (zeroed) state.
+static void ClearPbkitTiles()
+{
+    for (int i = 0; i < 2; ++i) { // tile 0 = front/back buffers, tile 1 = depth-stencil
+        volatile uint32_t *pfb    = (volatile uint32_t *)(VIDEO_BASE + NV_PFB_TILE + i * 16);
+        volatile uint32_t *pgraph = (volatile uint32_t *)(VIDEO_BASE + NV_PGRAPH_TILE_XBOX + i * 16);
+
+        for (int r = 0; r < 3; ++r) { // 0 = addr+enable, 1 = tail, 2 = pitch
+            pfb[r]    = 0;
+            pgraph[r] = 0;
+
+            uint32_t rdiAddr              = ((i * 4 + 0x10 + r * 0x20) & NV_PGRAPH_RDI_INDEX_ADDRESS) | ((0xEA << 16) & NV_PGRAPH_RDI_INDEX_SELECT);
+            VIDEOREG(NV_PGRAPH_RDI_INDEX) = rdiAddr;
+            VIDEOREG(NV_PGRAPH_RDI_DATA)  = 0;
+        }
+    }
+}
+#endif
+
 void SetXboxResolution()
 {
     // Prefer 720p when the dashboard has it enabled (HD AV pack + 720p flag);
     // XVideoSetMode fails otherwise, so falling back to 640x480 respects the
-    // console's video settings (same approach as LithiumX)
+    // console's video settings (same approach as LithiumX).
+    // 720p uses 16bpp: at 32bpp pbkit's 4 full-frame buffers (front + 2 back +
+    // depth) eat ~14.7MB of contiguous RAM and the storage pools fail to
+    // allocate; RGB565 halves the color buffers (~9.2MB total) and matches the
+    // game's internal RGB565 framebuffers anyway.
     SCREEN_WIDTH  = 1280;
     SCREEN_HEIGHT = 720;
-    if (!XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT)) {
+    if (XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 16, REFRESH_DEFAULT)) {
+#ifdef RSDK_USE_SDL3
+        pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5, false); // must precede pb_init
+#endif
+    }
+    else {
         SCREEN_WIDTH  = 640;
         SCREEN_HEIGHT = 480;
         XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
@@ -109,6 +140,9 @@ void SetXboxResolution()
     int pbStatus = pb_init();
     if (pbStatus < 0 && pbStatus != -8)
         debugPrint("pb_init failed early: %d\n", pbStatus);
+
+    if (pbStatus >= 0 && SCREEN_HEIGHT >= 720)
+        ClearPbkitTiles();
 #endif
 }
 
@@ -118,8 +152,7 @@ double atof(const char *s)
     double a = 0.0;
     int e    = 0;
     int c;
-    while ((c = *s++) != '\0' && (c >= '0' && c <= '9'))
-        a = a * 10.0 + (c - '0');
+    while ((c = *s++) != '\0' && (c >= '0' && c <= '9')) a = a * 10.0 + (c - '0');
     if (c == '.') {
         while ((c = *s++) != '\0' && (c >= '0' && c <= '9')) {
             a = a * 10.0 + (c - '0');
