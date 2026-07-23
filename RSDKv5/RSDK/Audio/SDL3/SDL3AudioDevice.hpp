@@ -17,9 +17,15 @@ public:
 
     inline static void HandleStreamLoad(ChannelInfo *channel, bool32 async)
     {
-        // Loading a music stream shares the persistent Data.rsdk file handle with the
-        // main thread, which isn't safe across threads on Xbox — load synchronously.
+#if RETRO_PLATFORM == RETRO_XBOX
+        // Pack reads are seek+read-atomic (Reader.hpp packReadLock), so streams can
+        // load on the async loader thread; CHANNEL_LOADING_STREAM keeps the channel
+        // reserved until the data lands. Falls back to sync if the queue is full.
+        if (async && EnqueueStreamLoad(channel))
+            return;
+#else
         (void)async;
+#endif
         LoadStream(channel);
     }
 

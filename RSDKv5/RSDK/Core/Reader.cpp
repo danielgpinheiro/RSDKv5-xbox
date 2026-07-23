@@ -12,6 +12,12 @@ char RSDK::gameLogicName[0x200];
 
 bool32 RSDK::useDataPack = false;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+// Initialized in LoadDataPack (single-threaded boot), before any loader thread
+RTL_CRITICAL_SECTION RSDK::packReadCS;
+bool32 RSDK::packReadCSInit = false;
+#endif
+
 #if RETRO_REV0U
 void RSDK::DetectEngineVersion()
 {
@@ -106,6 +112,13 @@ void RSDK::DetectEngineVersion()
 
 bool32 RSDK::LoadDataPack(const char *filePath, size_t fileOffset, bool32 useBuffer)
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    if (!packReadCSInit) { // single-threaded here, before any loader thread
+        RtlInitializeCriticalSection(&packReadCS);
+        packReadCSInit = true;
+    }
+#endif
+
     MEM_ZERO(dataPacks[dataPackCount]);
     useDataPack = false;
     FileInfo info;
@@ -198,7 +211,9 @@ bool32 RSDK::OpenDataFile(FileInfo *info, const char *filename)
                 }
             }
             info->file = pack->persistentFile;
+            PACK_READ_LOCK();
             fSeek(info->file, file->offset, SEEK_SET);
+            PACK_READ_UNLOCK();
         }
         else {
             // a bit of a hack, but it is how it is in the original

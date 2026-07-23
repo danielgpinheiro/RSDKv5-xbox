@@ -29,7 +29,7 @@
 #undef fTell
 #undef fClose
 #undef fWrite
-#define FileIO    FILE
+#define FileIO                                          FILE
 #define fOpen(path, mode)                               fopen(path, mode)
 #define fRead(buffer, elementSize, elementCount, file)  fread(buffer, elementSize, elementCount, file)
 #define fSeek(file, offset, whence)                     fseek(file, offset, whence)
@@ -41,6 +41,31 @@
 #if RETRO_PLATFORM == RETRO_ANDROID
 #undef fOpen
 FileIO *fOpen(const char *path, const char *mode);
+#endif
+
+#if RETRO_PLATFORM == RETRO_XBOX
+// All datapack reads share one FILE* (dataPacks[].persistentFile) and every read
+// helper below re-seeks to its FileInfo's absolute position first. Making each
+// seek+read pair atomic is therefore all that's needed for cross-thread safety
+// (main thread + the async sfx/music loader thread).
+// Kernel critical sections are used instead of SDL mutexes: SDL_CreateMutex is
+// unreliable before SDL_Init on nxdk, and SDL_LockMutex(NULL) silently no-ops,
+// which voided the locking and corrupted concurrent pack reads.
+#include <xboxkrnl/xboxkrnl.h>
+namespace RSDK
+{
+extern RTL_CRITICAL_SECTION packReadCS;
+extern bool32 packReadCSInit;
+} // namespace RSDK
+#define PACK_READ_LOCK()                                                                                                                             \
+    if (RSDK::packReadCSInit)                                                                                                                        \
+    RtlEnterCriticalSection(&RSDK::packReadCS)
+#define PACK_READ_UNLOCK()                                                                                                                           \
+    if (RSDK::packReadCSInit)                                                                                                                        \
+    RtlLeaveCriticalSection(&RSDK::packReadCS)
+#else
+#define PACK_READ_LOCK()
+#define PACK_READ_UNLOCK()
 #endif
 
 #include <miniz/miniz.h>
@@ -166,7 +191,9 @@ inline void Seek_Set(FileInfo *info, int32 count)
             info->fileBuffer  = &fileBuffer[info->readPos];
         }
         else {
+            PACK_READ_LOCK();
             fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
+            PACK_READ_UNLOCK();
         }
     }
 }
@@ -182,7 +209,11 @@ inline void Seek_Cur(FileInfo *info, int32 count)
         info->fileBuffer += count;
     }
     else {
+        // Note: must be locked even though every read re-seeks absolutely — an
+        // unlocked seek can land inside another thread's locked seek+read pair
+        PACK_READ_LOCK();
         fSeek(info->file, count, SEEK_CUR);
+        PACK_READ_UNLOCK();
     }
 }
 
@@ -196,8 +227,10 @@ inline size_t ReadBytes(FileInfo *info, void *data, int32 count)
         info->fileBuffer += bytesRead;
     }
     else {
+        PACK_READ_LOCK();
         fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(data, 1, count, info->file);
+        PACK_READ_UNLOCK();
     }
 
     if (info->encrypted)
@@ -220,8 +253,10 @@ inline uint8 ReadInt8(FileInfo *info)
         }
     }
     else {
+        PACK_READ_LOCK();
         fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(&result, 1, sizeof(int8), info->file);
+        PACK_READ_UNLOCK();
     }
 
     if (info->encrypted)
@@ -250,8 +285,10 @@ inline int16 ReadInt16(FileInfo *info)
         }
     }
     else {
+        PACK_READ_LOCK();
         fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(buffer.b, 1, sizeof(int16), info->file);
+        PACK_READ_UNLOCK();
     }
 
     if (info->encrypted)
@@ -295,8 +332,10 @@ inline int32 ReadInt32(FileInfo *info, bool32 swapEndian)
         }
     }
     else {
+        PACK_READ_LOCK();
         fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(buffer.b, 1, sizeof(int32), info->file);
+        PACK_READ_UNLOCK();
     }
 
     if (info->encrypted)
@@ -352,7 +391,10 @@ inline int64 ReadInt64(FileInfo *info)
         }
     }
     else {
+        PACK_READ_LOCK();
+        fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(buffer.b, 1, sizeof(int64), info->file);
+        PACK_READ_UNLOCK();
     }
 
     if (info->encrypted)
@@ -396,7 +438,10 @@ inline float ReadSingle(FileInfo *info)
         }
     }
     else {
+        PACK_READ_LOCK();
+        fSeek(info->file, info->fileOffset + info->readPos, SEEK_SET);
         bytesRead = fRead(buffer.b, 1, sizeof(float), info->file);
+        PACK_READ_UNLOCK();
     }
 
     if (info->encrypted)
