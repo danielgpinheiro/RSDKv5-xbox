@@ -70,7 +70,13 @@ void AudioDeviceBase::ProcessAudioMixing(void *stream, int32 length)
             case CHANNEL_IDLE: break;
 
             case CHANNEL_SFX: {
+#ifdef RETRO_SFX_USE_S16
+                // SFX samples are stored as S16 (see LoadSfxToSlot); interpolate in
+                // integer space and scale to float once per output sample
+                const int16 *sfxBuffer = (const int16 *)channel->samplePtr + channel->bufferPos;
+#else
                 SAMPLE_FORMAT *sfxBuffer = &channel->samplePtr[channel->bufferPos];
+#endif
 
                 float volL = channel->volume, volR = channel->volume;
                 if (channel->pan < 0.0f)
@@ -91,8 +97,14 @@ void AudioDeviceBase::ProcessAudioMixing(void *stream, int32 length)
                         sample = 0;
                     else
 #endif
-                        sample = (sfxBuffer[1] - sfxBuffer[0]) * linearInterpolationLookup[speedPercent / LINEAR_INTERPOLATION_LOOKUP_DIVISOR]
-                                 + sfxBuffer[0];
+#ifdef RETRO_SFX_USE_S16
+                        sample = ((float)(sfxBuffer[1] - sfxBuffer[0]) * linearInterpolationLookup[speedPercent / LINEAR_INTERPOLATION_LOOKUP_DIVISOR]
+                                  + (float)sfxBuffer[0])
+                                 * (1.0f / 32768.0f);
+#else
+                    sample =
+                        (sfxBuffer[1] - sfxBuffer[0]) * linearInterpolationLookup[speedPercent / LINEAR_INTERPOLATION_LOOKUP_DIVISOR] + sfxBuffer[0];
+#endif
 
                     speedPercent += channel->speed;
                     sfxBuffer += FROM_FIXED(speedPercent);
@@ -113,7 +125,11 @@ void AudioDeviceBase::ProcessAudioMixing(void *stream, int32 length)
                             channel->bufferPos -= (uint32)channel->sampleLength;
                             channel->bufferPos += channel->loop;
 
+#ifdef RETRO_SFX_USE_S16
+                            sfxBuffer = (const int16 *)channel->samplePtr + channel->bufferPos;
+#else
                             sfxBuffer = &channel->samplePtr[channel->bufferPos];
+#endif
                         }
                     }
                 }
@@ -405,12 +421,21 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
                 if (sampleBits == 16)
                     length /= 2;
 
+#ifdef RETRO_SFX_USE_S16
+                // Store SFX as S16 (native wav size) instead of F32: halves the SFX
+                // pool footprint so the ~68 global sounds (jump/rings/menu) fit. This
+                // is purely a storage format — loading stays synchronous, no threads.
+                // The buffer field stays float* for engine compatibility; the mixer's
+                // CHANNEL_SFX branch casts.
+                AllocateStorage((void **)&sfxList[slot].buffer, sizeof(int16) * length, DATASET_SFX, false);
+#else
                 AllocateStorage((void **)&sfxList[slot].buffer, sizeof(float) * length, DATASET_SFX, false);
                 sfxList[slot].length = length;
+#endif
 
 #if !RETRO_USE_ORIGINAL_CODE
                 // The SFX pool can run out (it is much smaller on Xbox than the 32MB PC
-                // default); without this guard the F32 conversion below writes through a
+                // default); without this guard the conversion below writes through a
                 // NULL pointer and crashes the console
                 if (!sfxList[slot].buffer) {
                     PrintLog(PRINT_ERROR, "Unable to allocate sfx buffer (%u samples): %s", length, filename);
@@ -421,6 +446,28 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
                 }
 #endif
 
+#ifdef RETRO_SFX_USE_S16
+                // Bulk-read the whole data chunk in ONE ReadBytes (per-sample ReadInt*
+                // was tens of thousands of syscalls per wav — minutes on real disc),
+                // then convert in place. 16-bit keeps the engine's 0.75 attenuation;
+                // 8-bit is stored plain, matching the F32 path.
+                int16 *buffer = (int16 *)sfxList[slot].buffer;
+                if (sampleBits == 8) {
+                    // Read raw U8 into the upper half, then expand in place to S16.
+                    // Iterate FORWARD: the write of buffer[s] (bytes 2s,2s+1) must not
+                    // clobber raw[s'] (byte length+s') for any s' still unread — forward
+                    // keeps 2s+1 < length+s+1 for all s<length-1, and raw[s] is read
+                    // before its own write. (Backward corrupted 8-bit sfx like SSExit.)
+                    uint8 *raw = (uint8 *)buffer + length;
+                    ReadBytes(&info, raw, length);
+                    for (int32 s = 0; s < (int32)length; ++s) buffer[s] = (int16)((raw[s] - 0x80) << 8);
+                }
+                else {
+                    ReadBytes(&info, buffer, length * sizeof(int16));
+                    for (int32 s = 0; s < (int32)length; ++s) buffer[s] = (int16)((buffer[s] * 3) >> 2);
+                }
+                sfxList[slot].length = length;
+#else
                 // Convert the sample data to F32 format
                 float *buffer = (float *)sfxList[slot].buffer;
                 if (sampleBits == 8) {
@@ -443,6 +490,7 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
                         *buffer++ = (sample / (float)0x8000) * 0.75f;
                     }
                 }
+#endif
             }
 #if !RETRO_USE_ORIGINAL_CODE
             else {
@@ -470,6 +518,23 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
 
 void RSDK::LoadSfx(char *filename, uint8 plays, uint8 scope)
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Dedupe: stage sfx lists can re-list files already loaded as globals; a
+    // duplicate would waste a slot and pool space. Keep the widest scope so a
+    // global re-listed by a stage isn't cleared on stage unload.
+    {
+        RETRO_HASH_MD5(hash);
+        GEN_HASH_MD5(filename, hash);
+        for (uint32 i = 0; i < SFX_COUNT; ++i) {
+            if (sfxList[i].scope != SCOPE_NONE && HASH_MATCH_MD5(sfxList[i].hash, hash)) {
+                if (scope == SCOPE_GLOBAL)
+                    sfxList[i].scope = SCOPE_GLOBAL;
+                return;
+            }
+        }
+    }
+#endif
+
     // Find an empty sound slot.
     uint16 id = -1;
     for (uint32 i = 0; i < SFX_COUNT; ++i) {

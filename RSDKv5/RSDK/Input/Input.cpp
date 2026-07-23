@@ -320,6 +320,7 @@ void RSDK::ProcessInput()
             }
         }
     }
+
 }
 
 void RSDK::ProcessInputDevices()

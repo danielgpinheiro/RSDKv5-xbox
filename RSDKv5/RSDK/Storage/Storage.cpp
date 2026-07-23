@@ -44,11 +44,11 @@ bool32 RSDK::InitStorage()
     // found, but the allocation guards keep the game running.
     bool32 hd = XVideoGetMode().height >= 720;
 
-    dataStorage[DATASET_STG].storageLimit = (hd ? 12 : 14) * 1024 * 1024; // 14MB (12MB @720p)
-    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024; // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
-    dataStorage[DATASET_SFX].storageLimit = (hd ? 7 : 8) * 1024 * 1024;   //  8MB (7MB @720p)
-    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;              //  1MB
-    dataStorage[DATASET_TMP].storageLimit = 3 * 1024 * 1024;              //  3MB (scene decompression needs ~2.3MB)
+    dataStorage[DATASET_STG].storageLimit = (hd ? 12 : 14) * 1024 * 1024;            // 14MB (12MB @720p)
+    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024;            // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
+    dataStorage[DATASET_SFX].storageLimit = (hd ? 8 : 9) * 1024 * 1024 + 512 * 1024; // 9.5MB (8.5MB @720p): 68 global sfx (S16) + menu VO peak ~9.5MB
+    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;                         //  1MB
+    dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024 + 512 * 1024;            //  2.5MB (scene decompression needs ~2.2MB)
 #else
     dataStorage[DATASET_STG].storageLimit = 24 * 1024 * 1024; // 24MB
     dataStorage[DATASET_MUS].storageLimit = 8 * 1024 * 1024;  //  8MB

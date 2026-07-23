@@ -1109,18 +1109,17 @@ void RSDK::LoadGameConfig()
 #endif
 
         uint8 sfxCnt = ReadInt8(&info);
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         for (int32 i = 0; i < sfxCnt; ++i) {
             ReadString(&info, buffer);
             uint8 maxConcurrentPlays = ReadInt8(&info);
-#if RETRO_PLATFORM != RETRO_XBOX
             LoadSfx(buffer, maxConcurrentPlays, SCOPE_GLOBAL);
-#endif
-#if RETRO_PLATFORM == RETRO_XBOX
-#endif
         }
+
 #if RETRO_PLATFORM == RETRO_XBOX
+        // Global sfx are the largest fixed consumer of the (small) Xbox SFX pool —
+        // keep their footprint visible so pool sizing stays honest
+        PrintLog(PRINT_NORMAL, "audio: %d global sfx, SFX pool used %u KB", sfxCnt,
+                 (uint32)(dataStorage[DATASET_SFX].usedStorage * sizeof(uint32)) >> 10);
 #endif
 
         uint16 totalSceneCount = ReadInt16(&info);
