@@ -463,11 +463,15 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
                 // syscalls per wav, minutes of loading on real disc hardware.
                 int16 *buffer = (int16 *)sfxList[slot].buffer;
                 if (sampleBits == 8) {
-                    // Read the raw U8 samples into the upper half, then expand
-                    // back-to-front in place to S16
+                    // Read the raw U8 samples into the upper half, then expand in
+                    // place to S16. Iterate FORWARD: the write of buffer[s] (bytes
+                    // 2s,2s+1) must not clobber raw[s'] (byte length+s') for any
+                    // s' still unread — forward keeps 2s+1 < length+s+1 for all
+                    // s<length-1, and raw[s] is read before its own write. (Backward
+                    // corrupts the upper half, which garbled 8-bit sfx like SSExit.)
                     uint8 *raw = (uint8 *)buffer + length;
                     ReadBytes(&info, raw, length);
-                    for (int32 s = (int32)length - 1; s >= 0; --s) buffer[s] = (int16)((raw[s] - 0x80) << 8);
+                    for (int32 s = 0; s < (int32)length; ++s) buffer[s] = (int16)((raw[s] - 0x80) << 8);
                 }
                 else {
                     ReadBytes(&info, buffer, length * sizeof(int16));
@@ -580,7 +584,9 @@ static int32 StreamLoaderProc(void *unused)
         strcpy(streamFilePath, job.path);
         streamStartPos  = job.startPos;
         streamLoopPoint = job.loopPoint;
+        PrintLog(PRINT_NORMAL, "streamtrace: load start %s (chState=%d)", job.path, job.channel->state);
         LoadStream(job.channel);
+        PrintLog(PRINT_NORMAL, "streamtrace: load done %s (chState=%d)", job.path, job.channel->state);
     }
 
     return 0;
@@ -595,8 +601,10 @@ bool32 RSDK::EnqueueStreamLoad(ChannelInfo *channel)
 
     if (!streamLoadThread)
         streamLoadThread = SDL_CreateThread(StreamLoaderProc, "StreamLoader", NULL);
-    if (!streamLoadThread)
+    if (!streamLoadThread) {
+        PrintLog(PRINT_NORMAL, "streamtrace: NO THREAD for %s -> sync fallback", streamFilePath);
         return false;
+    }
 
     StreamLoadJob job = {};
     job.channel       = channel;
@@ -614,6 +622,7 @@ bool32 RSDK::EnqueueStreamLoad(ChannelInfo *channel)
     }
     RtlLeaveCriticalSection(&streamLoadCS);
 
+    PrintLog(PRINT_NORMAL, "streamtrace: enqueue %s queued=%d", streamFilePath, queued);
     return queued; // full queue -> caller loads synchronously
 }
 #endif
