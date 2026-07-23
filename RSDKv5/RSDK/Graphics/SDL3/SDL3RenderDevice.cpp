@@ -349,9 +349,13 @@ bool RenderDevice::InitGraphicsAPI()
     pixelSize.x = screens[0].size.x;
     pixelSize.y = screens[0].size.y;
 
-    // INTEGER_SCALE preserves the game's aspect ratio at every output mode:
-    // 480p -> 1x (424x240 centered), 720p -> 3x (1272x720, 4px pillars)
-    if (!SDL_SetRenderLogicalPresentation(renderer, videoSettings.pixWidth, SCREEN_YSIZE, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE))
+    // Both modes preserve the game's aspect ratio (uniform x/y scale):
+    // 480p -> LETTERBOX fills the 640px width (424x240 -> 640x362, ~1.51x) with
+    //         bars top/bottom; a 2x integer scale (848 wide) wouldn't fit
+    // 720p -> INTEGER_SCALE gives exactly 3x (1272x720) with 4px pillars
+    SDL_RendererLogicalPresentation presentation =
+        videoSettings.windowHeight >= 720 ? SDL_LOGICAL_PRESENTATION_INTEGER_SCALE : SDL_LOGICAL_PRESENTATION_LETTERBOX;
+    if (!SDL_SetRenderLogicalPresentation(renderer, videoSettings.pixWidth, SCREEN_YSIZE, presentation))
         PrintLog(PRINT_NORMAL, "ERROR: SDL_SetRenderLogicalPresentation failed: %s", SDL_GetError());
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
