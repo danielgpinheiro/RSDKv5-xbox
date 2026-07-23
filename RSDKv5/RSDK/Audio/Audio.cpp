@@ -398,6 +398,19 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
                 AllocateStorage((void **)&sfxList[slot].buffer, sizeof(float) * length, DATASET_SFX, false);
                 sfxList[slot].length = length;
 
+#if !RETRO_USE_ORIGINAL_CODE
+                // The SFX pool can run out (it is much smaller on Xbox than the 32MB PC
+                // default); without this guard the F32 conversion below writes through a
+                // NULL pointer and crashes the console
+                if (!sfxList[slot].buffer) {
+                    PrintLog(PRINT_ERROR, "Unable to allocate sfx buffer (%u samples): %s", length, filename);
+                    sfxList[slot].scope  = SCOPE_NONE;
+                    sfxList[slot].length = 0;
+                    CloseFile(&info);
+                    return;
+                }
+#endif
+
                 // Convert the sample data to F32 format
                 float *buffer = (float *)sfxList[slot].buffer;
                 if (sampleBits == 8) {

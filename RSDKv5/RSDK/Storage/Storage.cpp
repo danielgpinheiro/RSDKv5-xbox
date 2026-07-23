@@ -30,23 +30,25 @@ bool32 RSDK::InitStorage()
 {
     // Storage limits.
 #if RETRO_PLATFORM == RETRO_XBOX
-    // Xbox has 64MB total RAM; reduce pools to fit.
-    // Budget (measured via MmQueryStatistics): ~32.7MB available here — the XBE image
-    // (engine + Mania .bss) commits ~24MB and pbkit's framebuffers ~5MB. The SDL3 XGU
-    // renderer still needs ~4MB after this (screen textures + vertex arena + video tex).
-    // MUS must hold an entire music OGG (stage tracks reach ~4MB) + 512KB vorbis state.
-    // Theora video playback needs ~5MB of free heap on top of these pools.
-    // 720p framebuffers (even at 16bpp) cost ~4.5MB more contiguous RAM than
-    // 480p; give some pool budget back so Theora FMV playback (~4MB of heap:
-    // th_decode_alloc reference frames + the RGB565 video texture) still fits.
-    // MUS must keep 4MB — stage music OGGs reach ~4MB and must fit whole.
+    // Xbox has 64MB total RAM; reduce pools to fit. Budget (measured via
+    // MmQueryStatistics): ~34.4MB available here at 480p/16bpp — the XBE image
+    // (engine + Mania .bss) commits ~24MB and pbkit's framebuffers ~3MB. The SDL3
+    // XGU renderer needs ~1.5MB after this, and Theora FMV playback several more.
+    // Pool sizes come from measurement (the pool-full PrintLog in AllocateStorage
+    // reports shortfalls): the Main Menu peaks over 13.7MB of STG (all five
+    // characters' sprite sheets) and ~7.5MB of SFX (competition VO etc. — stored
+    // as F32, double the wav size); scene decompression needs ~2.3MB of TMP; MUS
+    // must hold an entire music OGG (stage tracks reach ~4MB) + vorbis state.
+    // 720p framebuffers cost ~4.5MB more than 480p (both 16bpp), so the HD values
+    // are trimmed: menus will log pool-full errors at 720p until more memory is
+    // found, but the allocation guards keep the game running.
     bool32 hd = XVideoGetMode().height >= 720;
 
-    dataStorage[DATASET_STG].storageLimit = (hd ? 8 : 10) * 1024 * 1024; // 10MB (8MB @720p)
-    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024;             //  4MB
-    dataStorage[DATASET_SFX].storageLimit = (hd ? 6 : 7) * 1024 * 1024;  //  7MB (6MB @720p)
-    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;             //  1MB
-    dataStorage[DATASET_TMP].storageLimit = (hd ? 2 : 3) * 1024 * 1024;  //  3MB (2MB @720p)
+    dataStorage[DATASET_STG].storageLimit = (hd ? 12 : 14) * 1024 * 1024; // 14MB (12MB @720p)
+    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024;              //  4MB
+    dataStorage[DATASET_SFX].storageLimit = (hd ? 7 : 8) * 1024 * 1024;   //  8MB (7MB @720p)
+    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;              //  1MB
+    dataStorage[DATASET_TMP].storageLimit = 3 * 1024 * 1024;              //  3MB (scene decompression needs ~2.3MB)
 #else
     dataStorage[DATASET_STG].storageLimit = 24 * 1024 * 1024; // 24MB
     dataStorage[DATASET_MUS].storageLimit = 8 * 1024 * 1024;  //  8MB
@@ -177,6 +179,13 @@ void RSDK::AllocateStorage(void **dataPtr, uint32 size, StorageDataSets dataSet,
 
                     ++storage->entryCount;
                 }
+#if RETRO_PLATFORM == RETRO_XBOX
+                else {
+                    // Pool exhausted even after GC — callers receive NULL and must cope
+                    PrintLog(PRINT_ERROR, "ERROR: storage pool %d full: used %u B + req %u B > limit %u B", dataSet,
+                             (uint32)(storage->usedStorage * sizeof(uint32)), size, storage->storageLimit);
+                }
+#endif
             }
 
             // If there are too many storage entries, then perform garbage collection.
@@ -184,7 +193,7 @@ void RSDK::AllocateStorage(void **dataPtr, uint32 size, StorageDataSets dataSet,
                 GarbageCollectStorage(dataSet);
 
             // Clear the allocated memory if requested.
-            if (*data != NULL && clear == (bool32)true)
+            if (*data != NULL && clear == (bool32) true)
                 memset(*data, 0, size);
         }
     }
@@ -317,7 +326,6 @@ void RSDK::DefragmentAndGarbageCollectStorage(StorageDataSets set)
                 if (dataPtr == dataStorage[set].storageEntries[c])
                     dataStorage[set].storageEntries[c] = *dataStorage[set].dataEntries[c] = currentHeader + HEADER_SIZE;
 #endif
-
 
             // Update the offset in the allocation's header too.
             currentHeader[HEADER_DATA_OFFSET] = dataOffset + HEADER_SIZE;

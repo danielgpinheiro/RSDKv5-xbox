@@ -113,22 +113,20 @@ void SetXboxResolution()
     // Prefer 720p when the dashboard has it enabled (HD AV pack + 720p flag);
     // XVideoSetMode fails otherwise, so falling back to 640x480 respects the
     // console's video settings (same approach as LithiumX).
-    // 720p uses 16bpp: at 32bpp pbkit's 4 full-frame buffers (front + 2 back +
-    // depth) eat ~14.7MB of contiguous RAM and the storage pools fail to
-    // allocate; RGB565 halves the color buffers (~9.2MB total) and matches the
-    // game's internal RGB565 framebuffers anyway.
+    // Both modes use 16bpp (RGB565): at 32bpp pbkit's 4 full-frame buffers
+    // (front + 2 back + depth) waste RAM the storage pools need — ~1.7MB at
+    // 480p, ~7.4MB at 720p — and the game renders RGB565 internally anyway.
     SCREEN_WIDTH  = 1280;
     SCREEN_HEIGHT = 720;
-    if (XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 16, REFRESH_DEFAULT)) {
-#ifdef RSDK_USE_SDL3
-        pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5, false); // must precede pb_init
-#endif
-    }
-    else {
+    if (!XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 16, REFRESH_DEFAULT)) {
         SCREEN_WIDTH  = 640;
         SCREEN_HEIGHT = 480;
-        XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 32, REFRESH_DEFAULT);
+        XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 16, REFRESH_DEFAULT);
     }
+
+#ifdef RSDK_USE_SDL3
+    pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5, false); // must precede pb_init
+#endif
 
 #ifdef RSDK_USE_SDL3
     // Initialize pbkit NOW, before the engine allocates its storage pools.
