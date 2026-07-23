@@ -196,6 +196,15 @@ void AudioDeviceBase::InitAudioChannels()
     sfxList[SFX_COUNT - 1].length             = MIX_BUFFER_SIZE;
     AllocateStorage((void **)&sfxList[SFX_COUNT - 1].buffer, MIX_BUFFER_SIZE * sizeof(SAMPLE_FORMAT), DATASET_MUS, false);
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Allocate the vorbis work buffer at boot so the MUS pool layout is
+    // permanently [mix][vorbis][track]: track changes then free/alloc only the
+    // LAST block, and pool compaction reclaims it without ever moving live
+    // memory (stb_vorbis and the loader thread hold raw pointers into it)
+    vorbisAlloc.alloc_buffer_length_in_bytes = 512 * 1024;
+    AllocateStorage((void **)&vorbisAlloc.alloc_buffer, 512 * 1024, DATASET_MUS, false);
+#endif
+
     initializedAudioChannels = true;
 }
 
@@ -234,14 +243,13 @@ void RSDK::LoadStream(ChannelInfo *channel)
 
     stb_vorbis_close(vorbisInfo);
 
-    // Free previous track's buffers to avoid leaking MUS pool memory
+    // Free the previous track's buffer to avoid leaking MUS pool memory.
+    // vorbisAlloc is deliberately persistent (allocated once below): freeing it
+    // per track churned the pool layout and forced defrag compaction, which
+    // moved live buffers under stb_vorbis and the loader thread.
     if (streamBuffer) {
         RemoveStorageEntry((void **)&streamBuffer);
         streamBuffer = NULL;
-    }
-    if (vorbisAlloc.alloc_buffer) {
-        RemoveStorageEntry((void **)&vorbisAlloc.alloc_buffer);
-        vorbisAlloc.alloc_buffer = NULL;
     }
 
     FileInfo info;
@@ -260,7 +268,8 @@ void RSDK::LoadStream(ChannelInfo *channel)
 
         if (streamBufferSize > 0) {
             vorbisAlloc.alloc_buffer_length_in_bytes = 512 * 1024; // 512KiB
-            AllocateStorage((void **)&vorbisAlloc.alloc_buffer, 512 * 1024, DATASET_MUS, false);
+            if (!vorbisAlloc.alloc_buffer)                         // persistent: allocated once, reused for every track
+                AllocateStorage((void **)&vorbisAlloc.alloc_buffer, 512 * 1024, DATASET_MUS, false);
 
             if (vorbisAlloc.alloc_buffer) {
                 vorbisInfo = stb_vorbis_open_memory(streamBuffer, streamBufferSize, NULL, &vorbisAlloc);
@@ -517,128 +526,95 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
 }
 
 #if RETRO_PLATFORM == RETRO_XBOX
-#define RETRO_ASYNC_SFX_LOAD 1
-
-// ---- Async sfx/music loader -------------------------------------------------
-// Loading synchronously freezes the screen on Xbox (slow disc seeks; ~68 global
-// sfx at boot, multi-MB music OGGs at stage start). LoadSfx registers the slot
-// synchronously (hash/scope/plays) so GetSfx() never misses — game objects cache
-// GetSfx results at StageLoad — then defers the file read + sample conversion to
-// this worker thread. PlaySfx on a slot whose data hasn't landed is safely
-// silent (length == 0 idles the channel immediately). Music loads reuse the
-// same worker via a stream job (CHANNEL_LOADING_STREAM reserves the channel).
-// Thread safety: pack reads are seek+read-atomic (Reader.hpp packReadLock) and
-// the pool allocator is mutex-guarded (Storage.cpp storageLock).
-
-struct SfxLoadJob {
-    bool32 isStream;
-    ChannelInfo *streamChannel;
-    uint16 slot;
-    uint8 plays;
-    uint8 scope;
-    uint8 retries;
-    char path[0x80];
-};
-
-static bool32 SfxLoaderEnqueue(const SfxLoadJob *job);
+// ---- Async music loader -----------------------------------------------------
+// Music OGGs are multi-MB reads that would freeze the screen if loaded on the
+// main thread (PlayStream fires at stage start); this worker loads them in the
+// background (CHANNEL_LOADING_STREAM reserves the channel meanwhile). SFX are
+// loaded synchronously — bulk reads made them cheap, and deferring them caused
+// audible trigger delays. Each job carries its own path/start/loop because the
+// streamFilePath globals can be overwritten by a newer PlayStream before the
+// worker gets to an older job.
+// Thread safety: pack reads are seek+read-atomic (Reader.hpp packReadCS) and
+// the pool allocator is guarded (Storage.cpp storageCS).
 
 #include <xboxkrnl/xboxkrnl.h>
 
-#define SFX_LOAD_QUEUE_SIZE (0x100)
-static SfxLoadJob sfxLoadQueue[SFX_LOAD_QUEUE_SIZE];
-static int32 sfxLoadHead = 0; // guarded by sfxLoadCS
-static int32 sfxLoadTail = 0;
-static RTL_CRITICAL_SECTION sfxLoadCS; // kernel CS: SDL mutexes are unreliable pre-SDL_Init on nxdk
-static bool32 sfxLoadCSInit      = false;
-static SDL_Thread *sfxLoadThread = NULL;
+struct StreamLoadJob {
+    ChannelInfo *channel;
+    uint32 startPos;
+    int32 loopPoint;
+    char path[0x40];
+};
 
-static int32 SfxLoaderProc(void *unused)
+#define STREAM_LOAD_QUEUE_SIZE (8)
+static StreamLoadJob streamLoadQueue[STREAM_LOAD_QUEUE_SIZE];
+static int32 streamLoadHead = 0; // guarded by streamLoadCS
+static int32 streamLoadTail = 0;
+static RTL_CRITICAL_SECTION streamLoadCS; // kernel CS: SDL mutexes are unreliable pre-SDL_Init on nxdk
+static bool32 streamLoadCSInit      = false;
+static SDL_Thread *streamLoadThread = NULL;
+
+static int32 StreamLoaderProc(void *unused)
 {
     (void)unused;
 
     while (true) {
-        SfxLoadJob job;
+        StreamLoadJob job;
         bool32 hasJob = false;
 
-        RtlEnterCriticalSection(&sfxLoadCS);
-        if (sfxLoadTail != sfxLoadHead) {
-            // Music first: a stream job anywhere in the ring is taken before any
-            // sfx job, so slow disc I/O on dozens of queued sfx can't hold the
-            // stage/menu music hostage (swap it to the tail slot, then pop)
-            for (int32 i = sfxLoadTail; i != sfxLoadHead; i = (i + 1) % SFX_LOAD_QUEUE_SIZE) {
-                if (sfxLoadQueue[i].isStream) {
-                    if (i != sfxLoadTail) {
-                        SfxLoadJob tmp            = sfxLoadQueue[sfxLoadTail];
-                        sfxLoadQueue[sfxLoadTail] = sfxLoadQueue[i];
-                        sfxLoadQueue[i]           = tmp;
-                    }
-                    break;
-                }
-            }
-
-            job         = sfxLoadQueue[sfxLoadTail];
-            sfxLoadTail = (sfxLoadTail + 1) % SFX_LOAD_QUEUE_SIZE;
-            hasJob      = true;
+        RtlEnterCriticalSection(&streamLoadCS);
+        if (streamLoadTail != streamLoadHead) {
+            job            = streamLoadQueue[streamLoadTail];
+            streamLoadTail = (streamLoadTail + 1) % STREAM_LOAD_QUEUE_SIZE;
+            hasJob         = true;
         }
-        RtlLeaveCriticalSection(&sfxLoadCS);
+        RtlLeaveCriticalSection(&streamLoadCS);
 
         if (!hasJob) {
             SDL_Delay(5);
             continue;
         }
 
-        if (job.isStream) {
-            LoadStream(job.streamChannel);
-        }
-        else {
-            LoadSfxToSlot(job.path, (uint8)job.slot, job.plays, job.scope);
-
-            // A failed load resets the slot's scope; retry a couple of times
-            // (transient I/O hiccups) before accepting the sfx as missing
-            if (!sfxList[job.slot].scope && job.retries < 2) {
-                SfxLoadJob retry = job;
-                ++retry.retries;
-                sfxList[job.slot].scope              = job.scope; // keep GetSfx resolving meanwhile
-                sfxList[job.slot].maxConcurrentPlays = job.plays;
-                SfxLoaderEnqueue(&retry);
-            }
-        }
+        // Restore the stream globals from the job — this worker is the only
+        // consumer, so per-job values can't be clobbered by a newer PlayStream
+        strcpy(streamFilePath, job.path);
+        streamStartPos  = job.startPos;
+        streamLoopPoint = job.loopPoint;
+        LoadStream(job.channel);
     }
 
     return 0;
 }
 
-static bool32 SfxLoaderEnqueue(const SfxLoadJob *job)
-{
-    if (!sfxLoadCSInit) { // first enqueue is on the main thread, pre-worker
-        RtlInitializeCriticalSection(&sfxLoadCS);
-        sfxLoadCSInit = true;
-    }
-
-    if (!sfxLoadThread)
-        sfxLoadThread = SDL_CreateThread(SfxLoaderProc, "SfxLoader", NULL);
-    if (!sfxLoadThread)
-        return false;
-
-    bool32 queued = false;
-    RtlEnterCriticalSection(&sfxLoadCS);
-    int32 next = (sfxLoadHead + 1) % SFX_LOAD_QUEUE_SIZE;
-    if (next != sfxLoadTail) {
-        sfxLoadQueue[sfxLoadHead] = *job;
-        sfxLoadHead               = next;
-        queued                    = true;
-    }
-    RtlLeaveCriticalSection(&sfxLoadCS);
-
-    return queued; // full queue -> caller loads synchronously
-}
-
 bool32 RSDK::EnqueueStreamLoad(ChannelInfo *channel)
 {
-    SfxLoadJob job    = {};
-    job.isStream      = true;
-    job.streamChannel = channel;
-    return SfxLoaderEnqueue(&job);
+    if (!streamLoadCSInit) { // first enqueue is on the main thread, pre-worker
+        RtlInitializeCriticalSection(&streamLoadCS);
+        streamLoadCSInit = true;
+    }
+
+    if (!streamLoadThread)
+        streamLoadThread = SDL_CreateThread(StreamLoaderProc, "StreamLoader", NULL);
+    if (!streamLoadThread)
+        return false;
+
+    StreamLoadJob job = {};
+    job.channel       = channel;
+    job.startPos      = streamStartPos;
+    job.loopPoint     = streamLoopPoint;
+    strncpy(job.path, streamFilePath, sizeof(job.path) - 1);
+
+    bool32 queued = false;
+    RtlEnterCriticalSection(&streamLoadCS);
+    int32 next = (streamLoadHead + 1) % STREAM_LOAD_QUEUE_SIZE;
+    if (next != streamLoadTail) {
+        streamLoadQueue[streamLoadHead] = job;
+        streamLoadHead                  = next;
+        queued                          = true;
+    }
+    RtlLeaveCriticalSection(&streamLoadCS);
+
+    return queued; // full queue -> caller loads synchronously
 }
 #endif
 
@@ -673,29 +649,9 @@ void RSDK::LoadSfx(char *filename, uint8 plays, uint8 scope)
     if (id == (uint16)-1)
         return;
 
-#if RETRO_ASYNC_SFX_LOAD
-    // Register the slot now so GetSfx() resolves immediately; sample data
-    // arrives from the loader thread (the sfx is silent until then)
-    RETRO_HASH_MD5(hash);
-    GEN_HASH_MD5(filename, hash);
-    HASH_COPY_MD5(sfxList[id].hash, hash);
-    sfxList[id].scope              = scope;
-    sfxList[id].maxConcurrentPlays = plays;
-    sfxList[id].length             = 0;
-    sfxList[id].buffer             = NULL;
-
-    SfxLoadJob job = {};
-    job.isStream   = false;
-    job.slot       = id;
-    job.plays      = plays;
-    job.scope      = scope;
-    strncpy(job.path, filename, sizeof(job.path) - 1);
-
-    if (!SfxLoaderEnqueue(&job))
-        LoadSfxToSlot(filename, (uint8)id, plays, scope);
-#else
-    LoadSfxToSlot(filename, id, plays, scope);
-#endif
+    // Synchronous: bulk reads make sfx loads cheap, and deferring them to the
+    // loader caused audible trigger delays on hardware
+    LoadSfxToSlot(filename, (uint8)id, plays, scope);
 }
 
 #if RETRO_PLATFORM == RETRO_XBOX
