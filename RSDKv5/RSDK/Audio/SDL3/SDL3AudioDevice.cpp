@@ -13,6 +13,10 @@ bool32 AudioDevice::Init()
         InitAudioChannels();
     }
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    InitStreamLoader(); // start the music loader thread now (single-threaded, no audio lock held)
+#endif
+
     // The engine mixes 44.1kHz stereo float; SDL3 converts to the device format
     // (48kHz S16 stereo on the Xbox AC97 backend) inside the stream
     SDL_AudioSpec spec;

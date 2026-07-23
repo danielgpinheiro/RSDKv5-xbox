@@ -151,7 +151,25 @@ void RSDK::PrintLog(int32 mode, const char *message, ...)
 #endif
         }
 
-#if !RETRO_USE_ORIGINAL_CODE && RETRO_PLATFORM != RETRO_ANDROID
+#if RETRO_PLATFORM == RETRO_XBOX
+        // Keep one persistent handle (truncated fresh at first write this boot) and
+        // flush per line: the previous fOpen("a")/fClose per line dropped writes on
+        // FATX/pdclib once logging came from multiple threads, silently truncating
+        // the log. This whole function is serialized by printLogCS, so the shared
+        // handle is safe across the main/audio/loader threads.
+        static FileIO *logFile = NULL;
+        static bool32 logTried = false;
+        if (!logTried) {
+            logTried = true;
+            char logPath[0x100];
+            sprintf_s(logPath, sizeof(logPath), "%slog.txt", SKU::userFileDir);
+            logFile = fOpen(logPath, "w");
+        }
+        if (logFile) {
+            fWrite(outputString, 1, strlen(outputString), logFile);
+            fflush(logFile);
+        }
+#elif !RETRO_USE_ORIGINAL_CODE && RETRO_PLATFORM != RETRO_ANDROID
         char logPath[0x100];
         sprintf_s(logPath, sizeof(logPath), "%slog.txt", SKU::userFileDir);
         FileIO *file = fOpen(logPath, "a");

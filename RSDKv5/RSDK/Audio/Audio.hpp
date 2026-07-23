@@ -69,6 +69,8 @@ void LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope);
 void LoadSfx(char *filePath, uint8 plays, uint8 scope);
 
 #if RETRO_PLATFORM == RETRO_XBOX
+// Create the music loader thread once at boot (call from AudioDevice::Init)
+void InitStreamLoader();
 // Queue a music stream load on the async loader thread (see Audio.cpp);
 // returns false if the queue is full and the caller must load synchronously
 bool32 EnqueueStreamLoad(ChannelInfo *channel);

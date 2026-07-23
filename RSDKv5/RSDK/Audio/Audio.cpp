@@ -592,16 +592,24 @@ static int32 StreamLoaderProc(void *unused)
     return 0;
 }
 
+void RSDK::InitStreamLoader()
+{
+    // Create the music loader thread ONCE at audio init (single-threaded boot).
+    // Creating it lazily inside PlayStream's LockAudioDevice made the very first
+    // track load behave differently from all later ones — music stayed silent
+    // until a stage round-trip. Boot-time creation makes every load identical.
+    if (streamLoadCSInit)
+        return;
+
+    RtlInitializeCriticalSection(&streamLoadCS);
+    streamLoadCSInit = true;
+    streamLoadThread = SDL_CreateThread(StreamLoaderProc, "StreamLoader", NULL);
+    PrintLog(PRINT_NORMAL, "streamtrace: loader thread ready=%d", streamLoadThread != NULL);
+}
+
 bool32 RSDK::EnqueueStreamLoad(ChannelInfo *channel)
 {
-    if (!streamLoadCSInit) { // first enqueue is on the main thread, pre-worker
-        RtlInitializeCriticalSection(&streamLoadCS);
-        streamLoadCSInit = true;
-    }
-
-    if (!streamLoadThread)
-        streamLoadThread = SDL_CreateThread(StreamLoaderProc, "StreamLoader", NULL);
-    if (!streamLoadThread) {
+    if (!streamLoadThread) { // InitStreamLoader failed — caller loads synchronously
         PrintLog(PRINT_NORMAL, "streamtrace: NO THREAD for %s -> sync fallback", streamFilePath);
         return false;
     }
