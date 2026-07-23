@@ -291,6 +291,17 @@ void RSDK::RemoveStorageEntry(void **dataPtr)
 void RSDK::DefragmentAndGarbageCollectStorage(StorageDataSets set)
 {
     STORAGE_LOCK_SCOPE();
+
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Defragmenting an audio pool moves the buffers of currently-playing sounds
+    // while the audio thread mixes from raw channel pointers — block the audio
+    // callback for the duration and re-point the channels afterwards. (Lock order
+    // is always storageCS -> audio lock; the audio thread never takes storageCS.)
+    bool32 audioPool = (set == DATASET_SFX || set == DATASET_MUS) && AudioDeviceBase::initializedAudioChannels;
+    if (audioPool)
+        LockAudioDevice();
+#endif
+
     uint32 processedStorage = 0;
     uint32 unusedStorage    = 0;
 
@@ -371,10 +382,35 @@ void RSDK::DefragmentAndGarbageCollectStorage(StorageDataSets set)
             dataOffset += size;
         }
     }
+
+#if RETRO_PLATFORM == RETRO_XBOX
+    if (audioPool) {
+        // Re-point playing channels at the (possibly moved) buffers; the defrag
+        // above already updated sfxList[].buffer through dataEntries, but the
+        // channels hold raw copies of those pointers
+        for (int32 c = 0; c < CHANNEL_COUNT; ++c) {
+            switch (channels[c].state) {
+                case CHANNEL_SFX:
+                    if (channels[c].soundID >= 0 && channels[c].soundID < SFX_COUNT)
+                        channels[c].samplePtr = sfxList[channels[c].soundID].buffer;
+                    break;
+
+                case CHANNEL_STREAM:
+                case CHANNEL_LOADING_STREAM: channels[c].samplePtr = sfxList[SFX_COUNT - 1].buffer; break;
+
+                default: break;
+            }
+        }
+
+        UnlockAudioDevice();
+    }
+#endif
 }
 
 void RSDK::CopyStorage(uint32 **src, uint32 **dst)
 {
+    STORAGE_LOCK_SCOPE();
+
     if (dst != NULL) {
         uint32 *dstPtr = *dst;
         *src           = *dst;

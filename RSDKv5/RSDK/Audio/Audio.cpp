@@ -448,22 +448,21 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
 
 #ifdef RETRO_SFX_USE_S16
                 // Convert the sample data to S16 (16-bit keeps the engine's 0.75 sfx
-                // attenuation; 8-bit is stored plain, matching the F32 path)
+                // attenuation; 8-bit is stored plain, matching the F32 path).
+                // Bulk-read the whole data chunk in ONE ReadBytes: per-sample ReadInt16
+                // was a lock+seek+2-byte-fread per sample — tens of thousands of
+                // syscalls per wav, minutes of loading on real disc hardware.
                 int16 *buffer = (int16 *)sfxList[slot].buffer;
                 if (sampleBits == 8) {
-                    for (int32 s = 0; s < length; ++s) {
-                        *buffer++ = (int16)((ReadInt8(&info) - 0x80) << 8);
-                    }
+                    // Read the raw U8 samples into the upper half, then expand
+                    // back-to-front in place to S16
+                    uint8 *raw = (uint8 *)buffer + length;
+                    ReadBytes(&info, raw, length);
+                    for (int32 s = (int32)length - 1; s >= 0; --s) buffer[s] = (int16)((raw[s] - 0x80) << 8);
                 }
                 else {
-                    for (int32 s = 0; s < length; ++s) {
-                        int32 sample = (uint16)ReadInt16(&info);
-
-                        if (sample > 0x7FFF)
-                            sample = (sample & 0x7FFF) - 0x8000;
-
-                        *buffer++ = (int16)((sample * 3) >> 2);
-                    }
+                    ReadBytes(&info, buffer, length * sizeof(int16));
+                    for (int32 s = 0; s < (int32)length; ++s) buffer[s] = (int16)((buffer[s] * 3) >> 2);
                 }
 
                 SDL_CompilerBarrier(); // samples first, then length: PlaySfx sees complete data only
@@ -563,6 +562,20 @@ static int32 SfxLoaderProc(void *unused)
 
         RtlEnterCriticalSection(&sfxLoadCS);
         if (sfxLoadTail != sfxLoadHead) {
+            // Music first: a stream job anywhere in the ring is taken before any
+            // sfx job, so slow disc I/O on dozens of queued sfx can't hold the
+            // stage/menu music hostage (swap it to the tail slot, then pop)
+            for (int32 i = sfxLoadTail; i != sfxLoadHead; i = (i + 1) % SFX_LOAD_QUEUE_SIZE) {
+                if (sfxLoadQueue[i].isStream) {
+                    if (i != sfxLoadTail) {
+                        SfxLoadJob tmp            = sfxLoadQueue[sfxLoadTail];
+                        sfxLoadQueue[sfxLoadTail] = sfxLoadQueue[i];
+                        sfxLoadQueue[i]           = tmp;
+                    }
+                    break;
+                }
+            }
+
             job         = sfxLoadQueue[sfxLoadTail];
             sfxLoadTail = (sfxLoadTail + 1) % SFX_LOAD_QUEUE_SIZE;
             hasJob      = true;
