@@ -77,8 +77,48 @@ void RenderDevice::CopyFrameBuffer()
     }
 }
 
+#if RETRO_PLATFORM == RETRO_XBOX
+extern "C" unsigned int SDL_XBOXAUDIO_underruns; // from the nxdk-sdl3 audio driver
+
+// Once-per-second perf stats over serial (visible in xbwatson): frames presented,
+// worst frame-to-frame gap, and audio underrun delta — data for slowdown hunting
+static void LogFrameStats()
+{
+    static uint64 windowStart   = 0;
+    static uint64 lastFlip      = 0;
+    static uint32 frames        = 0;
+    static uint64 maxGap        = 0;
+    static uint32 lastUnderruns = 0;
+
+    uint64 now = SDL_GetTicks();
+    if (!windowStart) {
+        windowStart = now;
+        lastFlip    = now;
+        return;
+    }
+
+    ++frames;
+    if (now - lastFlip > maxGap)
+        maxGap = now - lastFlip;
+    lastFlip = now;
+
+    if (now - windowStart >= 1000) {
+        uint32 underruns = SDL_XBOXAUDIO_underruns;
+        PrintLog(PRINT_NORMAL, "perf: %u fps, max frame gap %u ms, audio underruns +%u", frames, (uint32)maxGap, underruns - lastUnderruns);
+        lastUnderruns = underruns;
+        windowStart   = now;
+        frames        = 0;
+        maxGap        = 0;
+    }
+}
+#endif
+
 void RenderDevice::FlipScreen()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    LogFrameStats();
+#endif
+
     if (windowRefreshDelay > 0) {
         windowRefreshDelay--;
         if (!windowRefreshDelay)
@@ -599,7 +639,7 @@ void RenderDevice::ConvertYUVToImageTexture(int32 width, int32 height, uint8 *yP
     static bool32 clampReady = false;
     if (!clampReady) {
         for (int32 i = 0; i < 864; ++i) {
-            int32 v      = i - 288;
+            int32 v       = i - 288;
             clampTable[i] = v < 0 ? 0 : (v > 255 ? 255 : (uint8)v);
         }
         clampReady = true;

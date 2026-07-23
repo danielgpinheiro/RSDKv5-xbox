@@ -382,6 +382,13 @@ void RSDK::LoadSettingsINI()
         engine.streamVolume   = (float)iniparser_getdouble(ini, "Audio:streamVolume", 0.8);
         engine.soundFXVolume  = (float)iniparser_getdouble(ini, "Audio:sfxVolume", 1.0);
 
+#if !RETRO_USE_ORIGINAL_CODE
+        // Volumes are 0.0-1.0; a mis-scaled ini (e.g. "100" meaning percent) would
+        // otherwise amplify the mix 100x and clip it into square waves
+        engine.streamVolume  = fminf(fmaxf(engine.streamVolume, 0.0f), 1.0f);
+        engine.soundFXVolume = fminf(fmaxf(engine.soundFXVolume, 0.0f), 1.0f);
+#endif
+
         for (int32 i = CONT_P1; i <= PLAYER_COUNT; ++i) {
             char buffer[0x30];
 
