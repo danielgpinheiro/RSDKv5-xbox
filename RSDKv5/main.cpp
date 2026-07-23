@@ -164,7 +164,6 @@ int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
 
 #if RETRO_PLATFORM == RETRO_XBOX
     SetXboxResolution();
-    RSDK::InitPrintLogLock(); // logs come from three threads (main/audio/loader)
 #endif
 
     RSDK::InitCoreAPI();

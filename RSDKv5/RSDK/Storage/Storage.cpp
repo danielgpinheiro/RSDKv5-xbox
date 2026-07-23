@@ -26,41 +26,8 @@ enum {
 
 DataStorage RSDK::dataStorage[DATASET_MAX];
 
-#if RETRO_PLATFORM == RETRO_XBOX
-// The async sfx/music loader thread allocates from the pools concurrently with
-// the main thread; kernel critical sections are recursive, so the internal
-// defrag/GC calls inside AllocateStorage stay safe. Initialized in InitStorage
-// (single-threaded boot). Kernel CS instead of SDL mutex: SDL_CreateMutex is
-// unreliable before SDL_Init on nxdk and SDL_LockMutex(NULL) silently no-ops.
-#include <xboxkrnl/xboxkrnl.h>
-static RTL_CRITICAL_SECTION storageCS;
-static bool32 storageCSInit = false;
-struct StorageLockGuard {
-    StorageLockGuard()
-    {
-        if (storageCSInit)
-            RtlEnterCriticalSection(&storageCS);
-    }
-    ~StorageLockGuard()
-    {
-        if (storageCSInit)
-            RtlLeaveCriticalSection(&storageCS);
-    }
-};
-#define STORAGE_LOCK_SCOPE() StorageLockGuard storageLockGuard_
-#else
-#define STORAGE_LOCK_SCOPE()
-#endif
-
 bool32 RSDK::InitStorage()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    if (!storageCSInit) { // single-threaded here, before any loader thread
-        RtlInitializeCriticalSection(&storageCS);
-        storageCSInit = true;
-    }
-#endif
-
     // Storage limits.
 #if RETRO_PLATFORM == RETRO_XBOX
     // Xbox has 64MB total RAM; reduce pools to fit. Budget (measured via
@@ -79,9 +46,9 @@ bool32 RSDK::InitStorage()
 
     dataStorage[DATASET_STG].storageLimit = (hd ? 12 : 14) * 1024 * 1024; // 14MB (12MB @720p)
     dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024; // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
-    dataStorage[DATASET_SFX].storageLimit = (hd ? 8 : 9) * 1024 * 1024 + 512 * 1024; // 9.5MB (8.5MB @720p): globals (S16) + menu VO peak ~9.5MB
-    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;                         //  1MB
-    dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024 + 512 * 1024;            //  2.5MB (scene decompression needs ~2.2MB)
+    dataStorage[DATASET_SFX].storageLimit = (hd ? 7 : 8) * 1024 * 1024;   //  8MB (7MB @720p)
+    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;              //  1MB
+    dataStorage[DATASET_TMP].storageLimit = 3 * 1024 * 1024;              //  3MB (scene decompression needs ~2.3MB)
 #else
     dataStorage[DATASET_STG].storageLimit = 24 * 1024 * 1024; // 24MB
     dataStorage[DATASET_MUS].storageLimit = 8 * 1024 * 1024;  //  8MB
@@ -133,7 +100,6 @@ void RSDK::ReleaseStorage()
 
 void RSDK::AllocateStorage(void **dataPtr, uint32 size, StorageDataSets dataSet, bool32 clear)
 {
-    STORAGE_LOCK_SCOPE();
     uint32 **data = (uint32 **)dataPtr;
     *data         = NULL;
 
@@ -235,7 +201,6 @@ void RSDK::AllocateStorage(void **dataPtr, uint32 size, StorageDataSets dataSet,
 
 void RSDK::RemoveStorageEntry(void **dataPtr)
 {
-    STORAGE_LOCK_SCOPE();
     if (dataPtr != NULL && *dataPtr != NULL) {
         uint32 *data = *(uint32 **)dataPtr;
 
@@ -290,13 +255,10 @@ void RSDK::RemoveStorageEntry(void **dataPtr)
 // This defragments the storage, leaving all empty space at the end.
 void RSDK::DefragmentAndGarbageCollectStorage(StorageDataSets set)
 {
-    STORAGE_LOCK_SCOPE();
-
 #if RETRO_PLATFORM == RETRO_XBOX
-    // Defragmenting an audio pool moves the buffers of currently-playing sounds
-    // while the audio thread mixes from raw channel pointers — block the audio
-    // callback for the duration and re-point the channels afterwards. (Lock order
-    // is always storageCS -> audio lock; the audio thread never takes storageCS.)
+    // Compacting an audio pool moves the buffers of currently-playing sounds
+    // while the SDL audio callback thread mixes from raw channel pointers — block
+    // the callback for the duration and re-point the channels afterward.
     bool32 audioPool = (set == DATASET_SFX || set == DATASET_MUS) && AudioDeviceBase::initializedAudioChannels;
     if (audioPool)
         LockAudioDevice();
@@ -385,9 +347,9 @@ void RSDK::DefragmentAndGarbageCollectStorage(StorageDataSets set)
 
 #if RETRO_PLATFORM == RETRO_XBOX
     if (audioPool) {
-        // Re-point playing channels at the (possibly moved) buffers; the defrag
-        // above already updated sfxList[].buffer through dataEntries, but the
-        // channels hold raw copies of those pointers
+        // Re-point playing channels at the (possibly moved) buffers; the loop
+        // above updated sfxList[].buffer through dataEntries, but the channels
+        // hold raw copies of those pointers
         for (int32 c = 0; c < CHANNEL_COUNT; ++c) {
             switch (channels[c].state) {
                 case CHANNEL_SFX:
@@ -409,8 +371,6 @@ void RSDK::DefragmentAndGarbageCollectStorage(StorageDataSets set)
 
 void RSDK::CopyStorage(uint32 **src, uint32 **dst)
 {
-    STORAGE_LOCK_SCOPE();
-
     if (dst != NULL) {
         uint32 *dstPtr = *dst;
         *src           = *dst;
@@ -429,7 +389,6 @@ void RSDK::CopyStorage(uint32 **src, uint32 **dst)
 
 void RSDK::GarbageCollectStorage(StorageDataSets set)
 {
-    STORAGE_LOCK_SCOPE();
     if ((uint32)set < DATASET_MAX) {
         for (uint32 e = 0; e < dataStorage[set].entryCount; ++e) {
             // So what's happening here is the engine is checking to see if the storage entry

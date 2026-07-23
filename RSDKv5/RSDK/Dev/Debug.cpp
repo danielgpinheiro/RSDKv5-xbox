@@ -42,43 +42,10 @@ inline void PrintConsole(const char *message)
 inline void PrintConsole(const char *message) { printf("%s", message); }
 #endif
 
-#if RETRO_PLATFORM == RETRO_XBOX
-// PrintLog is called from the main thread, the audio thread and the async
-// loader thread; outputString is shared, and interleaved serial writes garble
-// the log — serialize the whole function with a kernel critical section
-#include <xboxkrnl/xboxkrnl.h>
-static RTL_CRITICAL_SECTION printLogCS;
-static bool32 printLogCSInit = false;
-struct PrintLogLockGuard {
-    PrintLogLockGuard()
-    {
-        if (printLogCSInit)
-            RtlEnterCriticalSection(&printLogCS);
-    }
-    ~PrintLogLockGuard()
-    {
-        if (printLogCSInit)
-            RtlLeaveCriticalSection(&printLogCS);
-    }
-};
-void RSDK::InitPrintLogLock()
-{
-    if (!printLogCSInit) { // called from single-threaded boot
-        RtlInitializeCriticalSection(&printLogCS);
-        printLogCSInit = true;
-    }
-}
-#define PRINTLOG_LOCK_SCOPE() PrintLogLockGuard printLogLockGuard_
-#else
-#define PRINTLOG_LOCK_SCOPE()
-#endif
-
 void RSDK::PrintLog(int32 mode, const char *message, ...)
 {
 #if !RETRO_DISABLE_LOG
     if (engineDebugMode) {
-        PRINTLOG_LOCK_SCOPE();
-
         // make the full string
         char tmpStr[0x400];
         va_list args;
@@ -151,25 +118,7 @@ void RSDK::PrintLog(int32 mode, const char *message, ...)
 #endif
         }
 
-#if RETRO_PLATFORM == RETRO_XBOX
-        // Keep one persistent handle (truncated fresh at first write this boot) and
-        // flush per line: the previous fOpen("a")/fClose per line dropped writes on
-        // FATX/pdclib once logging came from multiple threads, silently truncating
-        // the log. This whole function is serialized by printLogCS, so the shared
-        // handle is safe across the main/audio/loader threads.
-        static FileIO *logFile = NULL;
-        static bool32 logTried = false;
-        if (!logTried) {
-            logTried = true;
-            char logPath[0x100];
-            sprintf_s(logPath, sizeof(logPath), "%slog.txt", SKU::userFileDir);
-            logFile = fOpen(logPath, "w");
-        }
-        if (logFile) {
-            fWrite(outputString, 1, strlen(outputString), logFile);
-            fflush(logFile);
-        }
-#elif !RETRO_USE_ORIGINAL_CODE && RETRO_PLATFORM != RETRO_ANDROID
+#if !RETRO_USE_ORIGINAL_CODE && RETRO_PLATFORM != RETRO_ANDROID
         char logPath[0x100];
         sprintf_s(logPath, sizeof(logPath), "%slog.txt", SKU::userFileDir);
         FileIO *file = fOpen(logPath, "a");

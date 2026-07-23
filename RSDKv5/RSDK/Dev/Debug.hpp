@@ -34,9 +34,6 @@ extern bool32 useEndLine;
 extern char outputString[0x400];
 
 void PrintLog(int32 mode, const char *message, ...);
-#if RETRO_PLATFORM == RETRO_XBOX
-void InitPrintLogLock(); // call once during single-threaded boot
-#endif
 
 #if !RETRO_REV02
 enum PrintMessageTypes {

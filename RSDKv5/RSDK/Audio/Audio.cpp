@@ -70,13 +70,7 @@ void AudioDeviceBase::ProcessAudioMixing(void *stream, int32 length)
             case CHANNEL_IDLE: break;
 
             case CHANNEL_SFX: {
-#ifdef RETRO_SFX_USE_S16
-                // SFX samples are stored as S16 (see LoadSfxToSlot); interpolate in
-                // integer space and scale to float once per output sample
-                const int16 *sfxBuffer = (const int16 *)channel->samplePtr + channel->bufferPos;
-#else
                 SAMPLE_FORMAT *sfxBuffer = &channel->samplePtr[channel->bufferPos];
-#endif
 
                 float volL = channel->volume, volR = channel->volume;
                 if (channel->pan < 0.0f)
@@ -97,14 +91,8 @@ void AudioDeviceBase::ProcessAudioMixing(void *stream, int32 length)
                         sample = 0;
                     else
 #endif
-#ifdef RETRO_SFX_USE_S16
-                        sample = ((float)(sfxBuffer[1] - sfxBuffer[0]) * linearInterpolationLookup[speedPercent / LINEAR_INTERPOLATION_LOOKUP_DIVISOR]
-                                  + (float)sfxBuffer[0])
-                                 * (1.0f / 32768.0f);
-#else
-                    sample =
-                        (sfxBuffer[1] - sfxBuffer[0]) * linearInterpolationLookup[speedPercent / LINEAR_INTERPOLATION_LOOKUP_DIVISOR] + sfxBuffer[0];
-#endif
+                        sample = (sfxBuffer[1] - sfxBuffer[0]) * linearInterpolationLookup[speedPercent / LINEAR_INTERPOLATION_LOOKUP_DIVISOR]
+                                 + sfxBuffer[0];
 
                     speedPercent += channel->speed;
                     sfxBuffer += FROM_FIXED(speedPercent);
@@ -125,11 +113,7 @@ void AudioDeviceBase::ProcessAudioMixing(void *stream, int32 length)
                             channel->bufferPos -= (uint32)channel->sampleLength;
                             channel->bufferPos += channel->loop;
 
-#ifdef RETRO_SFX_USE_S16
-                            sfxBuffer = (const int16 *)channel->samplePtr + channel->bufferPos;
-#else
                             sfxBuffer = &channel->samplePtr[channel->bufferPos];
-#endif
                         }
                     }
                 }
@@ -197,10 +181,10 @@ void AudioDeviceBase::InitAudioChannels()
     AllocateStorage((void **)&sfxList[SFX_COUNT - 1].buffer, MIX_BUFFER_SIZE * sizeof(SAMPLE_FORMAT), DATASET_MUS, false);
 
 #if RETRO_PLATFORM == RETRO_XBOX
-    // Allocate the vorbis work buffer at boot so the MUS pool layout is
-    // permanently [mix][vorbis][track]: track changes then free/alloc only the
-    // LAST block, and pool compaction reclaims it without ever moving live
-    // memory (stb_vorbis and the loader thread hold raw pointers into it)
+    // Allocate the vorbis work buffer once at boot so the MUS pool layout is
+    // permanently [mix][vorbis][track]: track changes free/alloc only the LAST
+    // block, so compaction reclaims it without moving the live streamBuffer that
+    // stb_vorbis and the audio thread hold pointers into.
     vorbisAlloc.alloc_buffer_length_in_bytes = 512 * 1024;
     AllocateStorage((void **)&vorbisAlloc.alloc_buffer, 512 * 1024, DATASET_MUS, false);
 #endif
@@ -244,9 +228,10 @@ void RSDK::LoadStream(ChannelInfo *channel)
     stb_vorbis_close(vorbisInfo);
 
     // Free the previous track's buffer to avoid leaking MUS pool memory.
-    // vorbisAlloc is deliberately persistent (allocated once below): freeing it
-    // per track churned the pool layout and forced defrag compaction, which
-    // moved live buffers under stb_vorbis and the loader thread.
+    // vorbisAlloc.alloc_buffer is deliberately persistent (allocated once in
+    // InitAudioChannels): freeing it per track churned the pool layout and
+    // forced compaction, which moved the live streamBuffer under the audio
+    // thread. Keeping [mix][vorbis][track] means only the last block changes.
     if (streamBuffer) {
         RemoveStorageEntry((void **)&streamBuffer);
         streamBuffer = NULL;
@@ -268,7 +253,7 @@ void RSDK::LoadStream(ChannelInfo *channel)
 
         if (streamBufferSize > 0) {
             vorbisAlloc.alloc_buffer_length_in_bytes = 512 * 1024; // 512KiB
-            if (!vorbisAlloc.alloc_buffer)                         // persistent: allocated once, reused for every track
+            if (!vorbisAlloc.alloc_buffer)                         // persistent: allocated once at boot, reused for every track
                 AllocateStorage((void **)&vorbisAlloc.alloc_buffer, 512 * 1024, DATASET_MUS, false);
 
             if (vorbisAlloc.alloc_buffer) {
@@ -354,17 +339,7 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/SoundFX/%s", filename);
 
     RETRO_HASH_MD5(hash);
-#if RETRO_PLATFORM == RETRO_XBOX
-    // This runs on the async loader thread: GEN_HASH_MD5 goes through the global
-    // textBuffer (documented not thread-safe) and would race the main thread —
-    // hash via a local scratch instead
-    char hashScratch[0x100];
-    strncpy(hashScratch, filename, sizeof(hashScratch) - 1);
-    hashScratch[sizeof(hashScratch) - 1] = 0;
-    GEN_HASH_MD5_BUFFER(hashScratch, hash);
-#else
     GEN_HASH_MD5(filename, hash);
-#endif
 
     if (LoadFile(&info, fullFilePath, FMODE_RB)) {
 #if RETRO_PLATFORM == RETRO_XBOX
@@ -430,21 +405,12 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
                 if (sampleBits == 16)
                     length /= 2;
 
-#ifdef RETRO_SFX_USE_S16
-                // Store SFX as S16 (native wav size) instead of F32: halves the SFX pool
-                // footprint and the mixer's memory traffic. The buffer field stays float*
-                // for engine compatibility; the mixer's CHANNEL_SFX branch casts.
-                // length is published AFTER the samples are converted (below) so the
-                // async loader never exposes a half-filled buffer to PlaySfx.
-                AllocateStorage((void **)&sfxList[slot].buffer, sizeof(int16) * length, DATASET_SFX, false);
-#else
                 AllocateStorage((void **)&sfxList[slot].buffer, sizeof(float) * length, DATASET_SFX, false);
                 sfxList[slot].length = length;
-#endif
 
 #if !RETRO_USE_ORIGINAL_CODE
                 // The SFX pool can run out (it is much smaller on Xbox than the 32MB PC
-                // default); without this guard the conversion below writes through a
+                // default); without this guard the F32 conversion below writes through a
                 // NULL pointer and crashes the console
                 if (!sfxList[slot].buffer) {
                     PrintLog(PRINT_ERROR, "Unable to allocate sfx buffer (%u samples): %s", length, filename);
@@ -455,32 +421,6 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
                 }
 #endif
 
-#ifdef RETRO_SFX_USE_S16
-                // Convert the sample data to S16 (16-bit keeps the engine's 0.75 sfx
-                // attenuation; 8-bit is stored plain, matching the F32 path).
-                // Bulk-read the whole data chunk in ONE ReadBytes: per-sample ReadInt16
-                // was a lock+seek+2-byte-fread per sample — tens of thousands of
-                // syscalls per wav, minutes of loading on real disc hardware.
-                int16 *buffer = (int16 *)sfxList[slot].buffer;
-                if (sampleBits == 8) {
-                    // Read the raw U8 samples into the upper half, then expand in
-                    // place to S16. Iterate FORWARD: the write of buffer[s] (bytes
-                    // 2s,2s+1) must not clobber raw[s'] (byte length+s') for any
-                    // s' still unread — forward keeps 2s+1 < length+s+1 for all
-                    // s<length-1, and raw[s] is read before its own write. (Backward
-                    // corrupts the upper half, which garbled 8-bit sfx like SSExit.)
-                    uint8 *raw = (uint8 *)buffer + length;
-                    ReadBytes(&info, raw, length);
-                    for (int32 s = 0; s < (int32)length; ++s) buffer[s] = (int16)((raw[s] - 0x80) << 8);
-                }
-                else {
-                    ReadBytes(&info, buffer, length * sizeof(int16));
-                    for (int32 s = 0; s < (int32)length; ++s) buffer[s] = (int16)((buffer[s] * 3) >> 2);
-                }
-
-                SDL_CompilerBarrier(); // samples first, then length: PlaySfx sees complete data only
-                sfxList[slot].length = length;
-#else
                 // Convert the sample data to F32 format
                 float *buffer = (float *)sfxList[slot].buffer;
                 if (sampleBits == 8) {
@@ -503,7 +443,6 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
                         *buffer++ = (sample / (float)0x8000) * 0.75f;
                     }
                 }
-#endif
             }
 #if !RETRO_USE_ORIGINAL_CODE
             else {
@@ -529,131 +468,8 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
     CloseFile(&info);
 }
 
-#if RETRO_PLATFORM == RETRO_XBOX
-// ---- Async music loader -----------------------------------------------------
-// Music OGGs are multi-MB reads that would freeze the screen if loaded on the
-// main thread (PlayStream fires at stage start); this worker loads them in the
-// background (CHANNEL_LOADING_STREAM reserves the channel meanwhile). SFX are
-// loaded synchronously — bulk reads made them cheap, and deferring them caused
-// audible trigger delays. Each job carries its own path/start/loop because the
-// streamFilePath globals can be overwritten by a newer PlayStream before the
-// worker gets to an older job.
-// Thread safety: pack reads are seek+read-atomic (Reader.hpp packReadCS) and
-// the pool allocator is guarded (Storage.cpp storageCS).
-
-#include <xboxkrnl/xboxkrnl.h>
-
-struct StreamLoadJob {
-    ChannelInfo *channel;
-    uint32 startPos;
-    int32 loopPoint;
-    char path[0x40];
-};
-
-#define STREAM_LOAD_QUEUE_SIZE (8)
-static StreamLoadJob streamLoadQueue[STREAM_LOAD_QUEUE_SIZE];
-static int32 streamLoadHead = 0; // guarded by streamLoadCS
-static int32 streamLoadTail = 0;
-static RTL_CRITICAL_SECTION streamLoadCS; // kernel CS: SDL mutexes are unreliable pre-SDL_Init on nxdk
-static bool32 streamLoadCSInit      = false;
-static SDL_Thread *streamLoadThread = NULL;
-
-static int32 StreamLoaderProc(void *unused)
-{
-    (void)unused;
-
-    while (true) {
-        StreamLoadJob job;
-        bool32 hasJob = false;
-
-        RtlEnterCriticalSection(&streamLoadCS);
-        if (streamLoadTail != streamLoadHead) {
-            job            = streamLoadQueue[streamLoadTail];
-            streamLoadTail = (streamLoadTail + 1) % STREAM_LOAD_QUEUE_SIZE;
-            hasJob         = true;
-        }
-        RtlLeaveCriticalSection(&streamLoadCS);
-
-        if (!hasJob) {
-            SDL_Delay(5);
-            continue;
-        }
-
-        // Restore the stream globals from the job — this worker is the only
-        // consumer, so per-job values can't be clobbered by a newer PlayStream
-        strcpy(streamFilePath, job.path);
-        streamStartPos  = job.startPos;
-        streamLoopPoint = job.loopPoint;
-        PrintLog(PRINT_NORMAL, "streamtrace: load start %s (chState=%d)", job.path, job.channel->state);
-        LoadStream(job.channel);
-        PrintLog(PRINT_NORMAL, "streamtrace: load done %s (chState=%d)", job.path, job.channel->state);
-    }
-
-    return 0;
-}
-
-void RSDK::InitStreamLoader()
-{
-    // Create the music loader thread ONCE at audio init (single-threaded boot).
-    // Creating it lazily inside PlayStream's LockAudioDevice made the very first
-    // track load behave differently from all later ones — music stayed silent
-    // until a stage round-trip. Boot-time creation makes every load identical.
-    if (streamLoadCSInit)
-        return;
-
-    RtlInitializeCriticalSection(&streamLoadCS);
-    streamLoadCSInit = true;
-    streamLoadThread = SDL_CreateThread(StreamLoaderProc, "StreamLoader", NULL);
-    PrintLog(PRINT_NORMAL, "streamtrace: loader thread ready=%d", streamLoadThread != NULL);
-}
-
-bool32 RSDK::EnqueueStreamLoad(ChannelInfo *channel)
-{
-    if (!streamLoadThread) { // InitStreamLoader failed — caller loads synchronously
-        PrintLog(PRINT_NORMAL, "streamtrace: NO THREAD for %s -> sync fallback", streamFilePath);
-        return false;
-    }
-
-    StreamLoadJob job = {};
-    job.channel       = channel;
-    job.startPos      = streamStartPos;
-    job.loopPoint     = streamLoopPoint;
-    strncpy(job.path, streamFilePath, sizeof(job.path) - 1);
-
-    bool32 queued = false;
-    RtlEnterCriticalSection(&streamLoadCS);
-    int32 next = (streamLoadHead + 1) % STREAM_LOAD_QUEUE_SIZE;
-    if (next != streamLoadTail) {
-        streamLoadQueue[streamLoadHead] = job;
-        streamLoadHead                  = next;
-        queued                          = true;
-    }
-    RtlLeaveCriticalSection(&streamLoadCS);
-
-    PrintLog(PRINT_NORMAL, "streamtrace: enqueue %s queued=%d", streamFilePath, queued);
-    return queued; // full queue -> caller loads synchronously
-}
-#endif
-
 void RSDK::LoadSfx(char *filename, uint8 plays, uint8 scope)
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    // Dedupe: stage sfx lists can re-list files that are already loaded (e.g. as
-    // globals); a duplicate would waste a slot and pool space. Keep the widest
-    // scope so a global re-listed by a stage isn't cleared on stage unload.
-    {
-        RETRO_HASH_MD5(hash);
-        GEN_HASH_MD5(filename, hash);
-        for (uint32 i = 0; i < SFX_COUNT; ++i) {
-            if (sfxList[i].scope != SCOPE_NONE && HASH_MATCH_MD5(sfxList[i].hash, hash)) {
-                if (scope == SCOPE_GLOBAL)
-                    sfxList[i].scope = SCOPE_GLOBAL;
-                return;
-            }
-        }
-    }
-#endif
-
     // Find an empty sound slot.
     uint16 id = -1;
     for (uint32 i = 0; i < SFX_COUNT; ++i) {
@@ -663,46 +479,14 @@ void RSDK::LoadSfx(char *filename, uint8 plays, uint8 scope)
         }
     }
 
-    if (id == (uint16)-1)
-        return;
-
-    // Synchronous: bulk reads make sfx loads cheap, and deferring them to the
-    // loader caused audible trigger delays on hardware
-    LoadSfxToSlot(filename, (uint8)id, plays, scope);
+    if (id != (uint16)-1)
+        LoadSfxToSlot(filename, id, plays, scope);
 }
-
-#if RETRO_PLATFORM == RETRO_XBOX
-// Temporary diagnosis for missing SFX on hardware: trace every PlaySfx decision
-// and inaudible-channel anomalies over serial. Toggle off once diagnosed.
-#define SFX_TRACE 1
-
-// Allow at most ~30 trace lines per second so serial stays readable
-static bool32 SfxTraceAllowed()
-{
-    static uint32 windowStart = 0;
-    static uint32 lines       = 0;
-
-    uint32 now = (uint32)SDL_GetTicks();
-    if (now - windowStart >= 1000) {
-        windowStart = now;
-        lines       = 0;
-    }
-    return ++lines <= 30;
-}
-#endif
 
 int32 RSDK::PlaySfx(uint16 sfx, uint32 loopPoint, uint32 priority)
 {
-#if SFX_TRACE
-    if (sfx >= SFX_COUNT || !sfxList[sfx].scope) {
-        if (SfxTraceAllowed())
-            PrintLog(PRINT_NORMAL, "sfxtrace: DROP id=%u (scope=%d, count=%d) not loaded", sfx, sfx < SFX_COUNT ? sfxList[sfx].scope : -1, SFX_COUNT);
-        return -1;
-    }
-#else
     if (sfx >= SFX_COUNT || !sfxList[sfx].scope)
         return -1;
-#endif
 
     uint8 count = 0;
     for (int32 c = 0; c < CHANNEL_COUNT; ++c) {
@@ -742,23 +526,8 @@ int32 RSDK::PlaySfx(uint16 sfx, uint32 loopPoint, uint32 priority)
         }
     }
 
-    if (slot == -1) {
-#if SFX_TRACE
-        if (SfxTraceAllowed()) {
-            PrintLog(PRINT_NORMAL, "sfxtrace: DROP id=%u no channel (prio=%u)", sfx, priority);
-            // Dump the channel table so it's obvious what is hogging the slots
-            for (int32 c = 0; c < CHANNEL_COUNT; ++c)
-                PrintLog(PRINT_NORMAL, "sfxtrace:   ch%02d id=%d state=%d loop=%d prio=%u pos=%u/%u", c, channels[c].soundID, channels[c].state,
-                         (int32)channels[c].loop, channels[c].priority, (uint32)channels[c].bufferPos, (uint32)channels[c].sampleLength);
-        }
-#endif
+    if (slot == -1)
         return -1;
-    }
-
-#if SFX_TRACE
-    if (SfxTraceAllowed())
-        PrintLog(PRINT_NORMAL, "sfxtrace: play id=%u slot=%d len=%u loop=%u prio=%u", sfx, slot, sfxList[sfx].length, loopPoint, priority);
-#endif
 
     LockAudioDevice();
 
@@ -785,13 +554,6 @@ int32 RSDK::PlaySfx(uint16 sfx, uint32 loopPoint, uint32 priority)
 void RSDK::SetChannelAttributes(uint8 channel, float volume, float panning, float speed)
 {
     if (channel < CHANNEL_COUNT) {
-#if SFX_TRACE
-        // Log only "inaudible" anomalies: silent volume, stopped/absurd speed, hard pan
-        if ((volume <= 0.01f || speed == 0.0f || speed > 4.0f || panning <= -0.99f || panning >= 0.99f) && SfxTraceAllowed())
-            PrintLog(PRINT_NORMAL, "sfxtrace: attr ch=%u id=%d vol=%d.%02d pan=%d.%02d spd=%d.%02d", channel, channels[channel].soundID,
-                     (int32)volume, (int32)(fabsf(volume) * 100) % 100, (int32)panning, (int32)(fabsf(panning) * 100) % 100, (int32)speed,
-                     (int32)(fabsf(speed) * 100) % 100);
-#endif
         volume                   = fminf(4.0f, volume);
         volume                   = fmaxf(0.0f, volume);
         channels[channel].volume = volume;
