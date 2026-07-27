@@ -72,7 +72,20 @@ RSDK_FLAGS = \
 	-DMINIZ_NO_STDIO \
 	-DMINIZ_NO_ARCHIVE_WRITING_APIS
 
-CFLAGS	+= -g3 $(EXTRA_OFLAGS) -Wall $(INCLUDES) $(RSDK_FLAGS)
+# Build posture. Default = performance: all PrintLog compiled out
+# (RETRO_DISABLE_LOG=1 — the per-line E:\log.txt I/O was a real FATX stall on
+# hardware), asserts off (NDEBUG), whole-program LTO on, no debug info.
+# DEBUG=y = diagnostic build: logging on, asserts on, debug info, no LTO.
+# (DEBUG/LTO reuse nxdk's own Makefile conventions, included below.)
+DEBUG ?= n
+ifeq ($(DEBUG),y)
+  EXTRA_OFLAGS += -g3
+else
+  RSDK_FLAGS  += -DRETRO_DISABLE_LOG=1 -DNDEBUG
+  LTO := y
+endif
+
+CFLAGS	+= $(EXTRA_OFLAGS) -Wall $(INCLUDES) $(RSDK_FLAGS)
 
 CXXFLAGS += $(CFLAGS) -Wpedantic
 
