@@ -28,9 +28,19 @@ bool32 RSDK::LoadVideo(const char *filename, double startDelay, bool32 (*skipCal
 #endif
 
     char fullFilePath[0x80];
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Xbox plays re-encoded videos shipped loose in D:\Videos\ only. The packed
+    // originals are 1024x512 and the Theora decoder can't fit alongside the 64MB
+    // storage pools; if the loose file is absent, skip the FMV rather than OOM.
+    sprintf_s(fullFilePath, sizeof(fullFilePath), "Videos/%s", filename);
+#else
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Video/%s", filename);
+#endif
 
     InitFileInfo(&VideoManager::file);
+#if RETRO_PLATFORM == RETRO_XBOX
+    VideoManager::file.externalFile = true; // force a plain fOpen of Videos\...; never the data pack
+#endif
     if (LoadFile(&VideoManager::file, fullFilePath, FMODE_RB)) {
         // Init
         ogg_sync_init(&VideoManager::oy);
@@ -256,8 +266,8 @@ void RSDK::ProcessVideo()
                 default: break;
 
                 case TH_PF_444:
-                    RenderDevice::SetupVideoTexture_YUV444(vidWidth, vidHeight, &yuv[0].data[dataPos], &yuv[1].data[dataPos],
-                                                           &yuv[2].data[dataPos], yuv[0].stride, yuv[1].stride, yuv[2].stride);
+                    RenderDevice::SetupVideoTexture_YUV444(vidWidth, vidHeight, &yuv[0].data[dataPos], &yuv[1].data[dataPos], &yuv[2].data[dataPos],
+                                                           yuv[0].stride, yuv[1].stride, yuv[2].stride);
                     break;
 
                 case TH_PF_422:

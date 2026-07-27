@@ -102,13 +102,24 @@ CXXFLAGS += $(SDL3_FLAGS)
 main.exe: libSDL3.lib
 
 # Bundle Data.rsdk in the ISO
-$(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini
+$(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini stage_videos
 
 $(OUTPUT_DIR)/Data.rsdk: $(CURDIR)/Data.rsdk | $(OUTPUT_DIR)
 	cp "$<" "$@"
 
 $(OUTPUT_DIR)/Settings.ini: $(CURDIR)/xbox/Settings.ini | $(OUTPUT_DIR)
 	cp "$<" "$@"
+
+# Optionally bundle re-encoded intro/cutscene videos as loose files at D:\Videos\.
+# The engine plays them from there and skips the FMV if the folder is absent, so
+# this staging is conditional and a build without Videos/ still succeeds.
+.PHONY: stage_videos
+stage_videos: | $(OUTPUT_DIR)
+	@if [ -d "$(CURDIR)/Videos" ]; then \
+	  echo "[ VIDEOS   ] staging Videos/ -> ISO"; \
+	  mkdir -p "$(OUTPUT_DIR)/Videos"; \
+	  cp -R "$(CURDIR)/Videos/." "$(OUTPUT_DIR)/Videos/"; \
+	fi
 
 clean_local:
 	@echo clean ...
