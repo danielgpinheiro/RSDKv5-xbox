@@ -42,9 +42,11 @@ bool32 RSDK::InitStorage()
     // guards keep the game running — sounds/sprites drop rather than crash).
     bool32 hd = XVideoGetMode().height >= 720;
 
-    dataStorage[DATASET_STG].storageLimit = (hd ? 11 : 12) * 1024 * 1024; // 12MB (11MB @720p)
+    dataStorage[DATASET_STG].storageLimit =
+        (hd ? 13 : 14) * 1024 * 1024; // 14MB (13MB @720p): Main Menu peaks ~13.7MB (all 5 characters) — must fit or it black-screens
     dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024; // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
-    dataStorage[DATASET_SFX].storageLimit = (hd ? 6 : 7) * 1024 * 1024;   //  7MB (6MB @720p): 68 global sfx (S16, ~5.9MB) + a little headroom
+    dataStorage[DATASET_SFX].storageLimit =
+        (hd ? 6 : 7) * 1024 * 1024; //  7MB (6MB @720p): 68 global sfx (S16, ~5.9MB); menu VO beyond this drops (guarded, not fatal)
     dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;              //  1MB
     dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024 + 512 * 1024; //  2.5MB (scene decompression needs ~2.2MB)
 

@@ -411,8 +411,14 @@ void RSDK::LoadSceneAssets()
 
             layer->layout = NULL;
             if (layer->xsize || layer->ysize) {
-                AllocateStorage((void **)&layer->layout, sizeof(uint16) * (1UL << layer->widthShift) * (1UL << layer->heightShift), DATASET_STG, true);
-                memset(layer->layout, 0xFF, sizeof(uint16) * (1UL << layer->widthShift) * (1UL << layer->heightShift));
+                AllocateStorage((void **)&layer->layout, sizeof(uint16) * (1UL << layer->widthShift) * (1UL << layer->heightShift), DATASET_STG,
+                                true);
+#if !RETRO_USE_ORIGINAL_CODE
+                // Guard against a full STG pool: memset(NULL) would hard-crash to a
+                // black screen. Degrade to an unpopulated layer instead.
+                if (layer->layout)
+#endif
+                    memset(layer->layout, 0xFF, sizeof(uint16) * (1UL << layer->widthShift) * (1UL << layer->heightShift));
             }
 
             int32 size = layer->xsize;
@@ -1025,7 +1031,7 @@ void RSDK::LoadStageGIF(char *filepath)
         tileset.palette = NULL;
         tileset.decoder = NULL;
 #endif
-        tileset.pixels  = NULL;
+        tileset.pixels = NULL;
     }
 }
 
