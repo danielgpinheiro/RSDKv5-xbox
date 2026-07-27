@@ -32,14 +32,15 @@ bool32 RSDK::LoadVideo(const char *filename, double startDelay, bool32 (*skipCal
     // Xbox plays re-encoded videos shipped loose in D:\Videos\ only. The packed
     // originals are 1024x512 and the Theora decoder can't fit alongside the 64MB
     // storage pools; if the loose file is absent, skip the FMV rather than OOM.
-    sprintf_s(fullFilePath, sizeof(fullFilePath), "Videos/%s", filename);
+    // Use an absolute D:\ path — nxdk has no CWD, so relative paths don't resolve.
+    sprintf_s(fullFilePath, sizeof(fullFilePath), "D:\\Videos\\%s", filename);
 #else
     sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Video/%s", filename);
 #endif
 
     InitFileInfo(&VideoManager::file);
 #if RETRO_PLATFORM == RETRO_XBOX
-    VideoManager::file.externalFile = true; // force a plain fOpen of Videos\...; never the data pack
+    VideoManager::file.externalFile = true; // force a plain fOpen of D:\Videos\...; never the data pack
 #endif
     if (LoadFile(&VideoManager::file, fullFilePath, FMODE_RB)) {
         // Init
