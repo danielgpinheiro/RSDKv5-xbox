@@ -76,6 +76,7 @@ int32 main(int32 argc, char *argv[]) { return RSDK_main(argc, argv, (void *)Link
 #endif
 
 #if RETRO_PLATFORM == RETRO_XBOX
+#include <hal/xbox.h> // XReboot
 #ifdef RSDK_USE_SDL3
 #include <pbkit/pbkit.h>
 #endif
@@ -169,6 +170,9 @@ int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
     RSDK::ReleaseCoreAPI();
 
 #if RETRO_PLATFORM == RETRO_XBOX
+    // Main-menu "Exit" ends the engine loop; on Xbox there is no parent process
+    // to return to, so reboot back to the dashboard.
+    XReboot();
 #endif
     return exitCode;
 }
