@@ -45,7 +45,15 @@ inline void PrintConsole(const char *message) { printf("%s", message); }
 void RSDK::PrintLog(int32 mode, const char *message, ...)
 {
 #if !RETRO_DISABLE_LOG
-    if (engineDebugMode) {
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Always log on Xbox — engineDebugMode isn't set until LoadSettingsINI, which
+    // runs AFTER InitStorage, so a pool-alloc failure there would otherwise be
+    // silent (black screen, empty log). This is a bring-up build; keep it on.
+    const bool32 shouldLog = true;
+#else
+    const bool32 shouldLog = engineDebugMode;
+#endif
+    if (shouldLog) {
         // make the full string
         char tmpStr[0x400];
         va_list args;

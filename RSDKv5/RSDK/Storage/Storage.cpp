@@ -30,25 +30,40 @@ bool32 RSDK::InitStorage()
 {
     // Storage limits.
 #if RETRO_PLATFORM == RETRO_XBOX
-    // Xbox has 64MB total RAM; reduce pools to fit. Budget (measured via
-    // MmQueryStatistics): ~34.4MB available here at 480p/16bpp — the XBE image
-    // (engine + Mania .bss) commits ~24MB and pbkit's framebuffers ~3MB. The SDL3
-    // XGU renderer needs ~1.5MB after this, and Theora FMV playback several more.
-    // Pool sizes come from measurement (the pool-full PrintLog in AllocateStorage
-    // reports shortfalls): the Main Menu peaks over 13.7MB of STG (all five
-    // characters' sprite sheets) and ~7.5MB of SFX (competition VO etc. — stored
-    // as F32, double the wav size); scene decompression needs ~2.3MB of TMP; MUS
-    // must hold an entire music OGG (stage tracks reach ~4MB) + vorbis state.
-    // 720p framebuffers cost ~4.5MB more than 480p (both 16bpp), so the HD values
-    // are trimmed: menus will log pool-full errors at 720p until more memory is
-    // found, but the allocation guards keep the game running.
+    // Xbox is a STOCK 64MB console (a debug BIOS/monitor reserves more RAM than
+    // xemu, which even at -m 64 leaves more free than real hardware — hence past
+    // "fits in xemu, black-screens on hardware" failures). The XBE .bss alone is
+    // ~19MB (engine + Mania static arrays) + ~4MB code, pbkit framebuffers ~3MB,
+    // kernel + debug monitor several MB — leaving roughly ~28-30MB for these pools
+    // plus transient heap (Theora FMV ~4MB). Sized conservatively to fit that with
+    // margin; the debugPrint below reports the REAL free RAM so this can be tuned
+    // from an actual console boot instead of guessed against xemu.
+    // Trade-off at these sizes: heavy scenes/menus may log pool-full (the alloc
+    // guards keep the game running — sounds/sprites drop rather than crash).
     bool32 hd = XVideoGetMode().height >= 720;
 
-    dataStorage[DATASET_STG].storageLimit = (hd ? 12 : 14) * 1024 * 1024;            // 14MB (12MB @720p)
-    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024;            // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
-    dataStorage[DATASET_SFX].storageLimit = (hd ? 8 : 9) * 1024 * 1024 + 512 * 1024; // 9.5MB (8.5MB @720p): 68 global sfx (S16) + menu VO peak ~9.5MB
-    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;                         //  1MB
-    dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024 + 512 * 1024;            //  2.5MB (scene decompression needs ~2.2MB)
+    dataStorage[DATASET_STG].storageLimit = (hd ? 11 : 12) * 1024 * 1024; // 12MB (11MB @720p)
+    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024; // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
+    dataStorage[DATASET_SFX].storageLimit = (hd ? 6 : 7) * 1024 * 1024;   //  7MB (6MB @720p): 68 global sfx (S16, ~5.9MB) + a little headroom
+    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;              //  1MB
+    dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024 + 512 * 1024; //  2.5MB (scene decompression needs ~2.2MB)
+
+    {
+        // Report the real memory budget over the debug channel (xbwatson shows
+        // this even before engineDebugMode/userFileDir are ready — unlike D:\log.txt)
+        MM_STATISTICS mm;
+        mm.Length = sizeof(mm);
+        MmQueryStatistics(&mm);
+        uint32 freeKB = (uint32)(mm.AvailablePages * 4); // 4KB pages
+        uint32 poolsKB =
+            (uint32)((dataStorage[DATASET_STG].storageLimit + dataStorage[DATASET_MUS].storageLimit + dataStorage[DATASET_SFX].storageLimit
+                      + dataStorage[DATASET_STR].storageLimit + dataStorage[DATASET_TMP].storageLimit)
+                     >> 10);
+        // debugPrint -> kernel-debug channel (xbwatson) survives the earliest boot;
+        // PrintLog -> serial + D:\log.txt so it's visible in the user's log too
+        debugPrint("STORAGE: free RAM %u KB, pools want %u KB (hd=%d)\n", freeKB, poolsKB, (int)hd);
+        PrintLog(PRINT_NORMAL, "STORAGE: free RAM %u KB, pools want %u KB (hd=%d)", freeKB, poolsKB, (int)hd);
+    }
 #else
     dataStorage[DATASET_STG].storageLimit = 24 * 1024 * 1024; // 24MB
     dataStorage[DATASET_MUS].storageLimit = 8 * 1024 * 1024;  //  8MB
@@ -65,6 +80,10 @@ bool32 RSDK::InitStorage()
 
         if (dataStorage[s].memoryTable == NULL) {
 #if RETRO_PLATFORM == RETRO_XBOX
+            // debugPrint reaches the debug channel (xbwatson) even here, before
+            // engineDebugMode/userFileDir make PrintLog->D:\log.txt work — so this
+            // OOM is no longer a silent black screen
+            debugPrint("STORAGE: FAILED to allocate %u KB for pool %d (out of RAM)\n", (uint32)(dataStorage[s].storageLimit >> 10), (int)s);
             PrintLog(PRINT_NORMAL, "ERROR: failed to allocate %d MB for storage pool %d", dataStorage[s].storageLimit >> 20, s);
 #endif
             return false;
