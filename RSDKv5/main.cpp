@@ -85,19 +85,15 @@ static int SCREEN_HEIGHT;
 
 void SetXboxResolution()
 {
-    // Prefer 720p when the dashboard has it enabled (HD AV pack + 720p flag);
-    // XVideoSetMode fails otherwise, so falling back to 640x480 respects the
-    // console's video settings (same approach as LithiumX).
-    // Both modes use 16bpp (RGB565): at 32bpp pbkit's 4 full-frame buffers
-    // (front + 2 back + depth) waste RAM the storage pools need — ~1.7MB at
-    // 480p, ~7.4MB at 720p — and the game renders RGB565 internally anyway.
-    SCREEN_WIDTH  = 1280;
-    SCREEN_HEIGHT = 720;
-    if (!XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 16, REFRESH_DEFAULT)) {
-        SCREEN_WIDTH  = 640;
-        SCREEN_HEIGHT = 480;
-        XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 16, REFRESH_DEFAULT);
-    }
+    // The port runs at 640x480 only. 720p is not viable on a stock 64MB console:
+    // its 16bpp framebuffers cost ~4.4MB more RAM than the storage pools can spare,
+    // it triples the upscale fill each frame, xemu can't emulate NV2A 720p, and it
+    // crashed on real hardware. 16bpp (RGB565): at 32bpp pbkit's 4 full-frame
+    // buffers (front + 2 back + depth) waste ~1.7MB the pools need, and the game
+    // renders RGB565 internally anyway.
+    SCREEN_WIDTH  = 640;
+    SCREEN_HEIGHT = 480;
+    XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 16, REFRESH_DEFAULT);
 
 #ifdef RSDK_USE_SDL3
     pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5, false); // must precede pb_init

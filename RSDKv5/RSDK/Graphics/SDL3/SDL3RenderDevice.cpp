@@ -38,9 +38,8 @@ bool RenderDevice::Init()
 
     videoSettings.windowed = false;
 
-    // Request the mode SetXboxResolution() already established (480p or 720p) —
-    // the nxdk video driver forces fullscreen and snaps 1280x720 requests to 720p
-    // and anything smaller to 640x480, re-asserting the display mode itself
+    // Request the 640x480 mode SetXboxResolution() already established — the nxdk
+    // video driver forces fullscreen and re-asserts the display mode itself
     VIDEO_MODE vm = XVideoGetMode();
     window        = SDL_CreateWindow(gameVerInfo.gameTitle, vm.width, vm.height, SDL_WINDOW_FULLSCREEN);
     if (!window) {
@@ -370,8 +369,7 @@ bool RenderDevice::InitGraphicsAPI()
         int32 screenWidth = (int32)((viewAspect * videoSettings.pixHeight) + 3) & 0xFFFFFFFC;
 #endif
         // Pin the internal width to pixWidth regardless of the window aspect: the
-        // logical presentation size is pixWidth x SCREEN_YSIZE, and at 720p the
-        // aspect math would yield 428, dropping INTEGER_SCALE from 3x to 2x
+        // logical presentation size is pixWidth x SCREEN_YSIZE
         screenWidth = videoSettings.pixWidth;
 
 #if !RETRO_USE_ORIGINAL_CODE
@@ -389,13 +387,10 @@ bool RenderDevice::InitGraphicsAPI()
     pixelSize.x = screens[0].size.x;
     pixelSize.y = screens[0].size.y;
 
-    // Both modes preserve the game's aspect ratio (uniform x/y scale):
-    // 480p -> LETTERBOX fills the 640px width (424x240 -> 640x362, ~1.51x) with
-    //         bars top/bottom; a 2x integer scale (848 wide) wouldn't fit
-    // 720p -> INTEGER_SCALE gives exactly 3x (1272x720) with 4px pillars
-    SDL_RendererLogicalPresentation presentation =
-        videoSettings.windowHeight >= 720 ? SDL_LOGICAL_PRESENTATION_INTEGER_SCALE : SDL_LOGICAL_PRESENTATION_LETTERBOX;
-    if (!SDL_SetRenderLogicalPresentation(renderer, videoSettings.pixWidth, SCREEN_YSIZE, presentation))
+    // 480p LETTERBOX preserves the game's aspect ratio (uniform x/y scale): it
+    // fills the 640px width (424x240 -> 640x362, ~1.51x) with bars top/bottom;
+    // a 2x integer scale (848 wide) wouldn't fit
+    if (!SDL_SetRenderLogicalPresentation(renderer, videoSettings.pixWidth, SCREEN_YSIZE, SDL_LOGICAL_PRESENTATION_LETTERBOX))
         PrintLog(PRINT_NORMAL, "ERROR: SDL_SetRenderLogicalPresentation failed: %s", SDL_GetError());
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);

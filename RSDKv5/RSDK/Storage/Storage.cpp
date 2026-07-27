@@ -40,14 +40,10 @@ bool32 RSDK::InitStorage()
     // from an actual console boot instead of guessed against xemu.
     // Trade-off at these sizes: heavy scenes/menus may log pool-full (the alloc
     // guards keep the game running — sounds/sprites drop rather than crash).
-    bool32 hd = XVideoGetMode().height >= 720;
-
-    dataStorage[DATASET_STG].storageLimit =
-        (hd ? 13 : 14) * 1024 * 1024; // 14MB (13MB @720p): Main Menu peaks ~13.7MB (all 5 characters) — must fit or it black-screens
+    dataStorage[DATASET_STG].storageLimit = 14 * 1024 * 1024; // 14MB: Main Menu peaks ~13.7MB (all 5 characters) — must fit or it black-screens
     dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024; // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
-    dataStorage[DATASET_SFX].storageLimit =
-        (hd ? 6 : 7) * 1024 * 1024; //  7MB (6MB @720p): 68 global sfx (S16, ~5.9MB); menu VO beyond this drops (guarded, not fatal)
-    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;              //  1MB
+    dataStorage[DATASET_SFX].storageLimit = 7 * 1024 * 1024; //  7MB: 68 global sfx (S16, ~5.9MB); menu VO beyond this drops (guarded, not fatal)
+    dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024; //  1MB
     dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024 + 512 * 1024; //  2.5MB (scene decompression needs ~2.2MB)
 
     {
@@ -63,8 +59,8 @@ bool32 RSDK::InitStorage()
                      >> 10);
         // debugPrint -> kernel-debug channel (xbwatson) survives the earliest boot;
         // PrintLog -> serial + D:\log.txt so it's visible in the user's log too
-        debugPrint("STORAGE: free RAM %u KB, pools want %u KB (hd=%d)\n", freeKB, poolsKB, (int)hd);
-        PrintLog(PRINT_NORMAL, "STORAGE: free RAM %u KB, pools want %u KB (hd=%d)", freeKB, poolsKB, (int)hd);
+        debugPrint("STORAGE: free RAM %u KB, pools want %u KB\n", freeKB, poolsKB);
+        PrintLog(PRINT_NORMAL, "STORAGE: free RAM %u KB, pools want %u KB", freeKB, poolsKB);
     }
 #else
     dataStorage[DATASET_STG].storageLimit = 24 * 1024 * 1024; // 24MB
