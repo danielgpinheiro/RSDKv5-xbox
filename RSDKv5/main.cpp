@@ -76,7 +76,7 @@ int32 main(int32 argc, char *argv[]) { return RSDK_main(argc, argv, (void *)Link
 #endif
 
 #if RETRO_PLATFORM == RETRO_XBOX
-#include <hal/xbox.h> // XReboot
+#include <hal/xbox.h> // XLaunchXBE
 #ifdef RSDK_USE_SDL3
 #include <pbkit/pbkit.h>
 #endif
@@ -171,8 +171,10 @@ int32 RSDK_main(int32 argc, char **argv, void *linkLogicPtr)
 
 #if RETRO_PLATFORM == RETRO_XBOX
     // Main-menu "Exit" ends the engine loop; on Xbox there is no parent process
-    // to return to, so reboot back to the dashboard.
-    XReboot();
+    // to return to. XLaunchXBE(NULL) does a quick reboot straight to the
+    // installed dashboard (LDT_LAUNCH_DASHBOARD) rather than XReboot()'s full
+    // cold restart. NORETURN on success; if it ever returns, fall through.
+    XLaunchXBE(NULL);
 #endif
     return exitCode;
 }
