@@ -32,9 +32,9 @@ bool32 DummyUserStorage::GetUsername(String *name)
     if (strlen(customSettings.username) > 0)
         InitString(name, customSettings.username, 0);
     else
-        InitString(name, "IntegerGeorge802", 0);
+        InitString(name, "RSDKv5x by LightWish", 0);
 #else
-    InitString(name, "IntegerGeorge802", 0);
+    InitString(name, "RSDKv5x by LightWish", 0);
 #endif
     return true;
 }

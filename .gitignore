@@ -31,6 +31,8 @@ cmake/
 
 # Safety
 *.rsdk
+# Xbox: re-encoded loose FMVs staged to D:\Videos\ (large binary assets, kept local)
+Videos/
 Sonic Mania/Static/*
 [Bb]yte[Cc]ode/
 [Dd]ata/
