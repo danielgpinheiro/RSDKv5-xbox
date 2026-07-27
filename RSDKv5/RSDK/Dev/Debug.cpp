@@ -128,7 +128,7 @@ void RSDK::PrintLog(int32 mode, const char *message, ...)
 
 #if !RETRO_USE_ORIGINAL_CODE && RETRO_PLATFORM != RETRO_ANDROID
         char logPath[0x100];
-        sprintf_s(logPath, sizeof(logPath), "%slog.txt", SKU::userFileDir);
+        sprintf_s(logPath, sizeof(logPath), "%slog.txt", SKU::userSaveDir);
         FileIO *file = fOpen(logPath, "a");
         if (file) {
             fWrite(&outputString, 1, strlen(outputString), file);

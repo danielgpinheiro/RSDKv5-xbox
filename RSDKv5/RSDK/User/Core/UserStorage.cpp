@@ -1,5 +1,10 @@
 #include "RSDK/Core/RetroEngine.hpp"
 
+#if RETRO_PLATFORM == RETRO_XBOX
+#include <windows.h>    // CreateDirectoryA / CopyFileA
+#include <nxdk/mount.h> // nxIsDriveMounted / nxMountDrive
+#endif
+
 #if RETRO_REV02
 
 // ====================
@@ -1023,6 +1028,7 @@ void RSDK::SKU::UserDBStorage_SaveCB8(int32 status)
 void (*RSDK::SKU::preLoadSaveFileCB)();
 void (*RSDK::SKU::postLoadSaveFileCB)();
 char RSDK::SKU::userFileDir[0x100];
+char RSDK::SKU::userSaveDir[0x100];
 
 bool32 RSDK::SKU::LoadUserFile(const char *filename, void *buffer, uint32 bufSize)
 {
@@ -1034,9 +1040,9 @@ bool32 RSDK::SKU::LoadUserFile(const char *filename, void *buffer, uint32 bufSiz
     if (strlen(customUserFileDir))
         sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", customUserFileDir, filename);
     else
-        sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userFileDir, filename);
+        sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userSaveDir, filename);
 #else
-    sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userFileDir, filename);
+    sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userSaveDir, filename);
 #endif
     PrintLog(PRINT_NORMAL, "Attempting to load user file: %s", fullFilePath);
 
@@ -1075,9 +1081,9 @@ bool32 RSDK::SKU::SaveUserFile(const char *filename, void *buffer, uint32 bufSiz
     if (strlen(customUserFileDir))
         sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", customUserFileDir, filename);
     else
-        sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userFileDir, filename);
+        sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userSaveDir, filename);
 #else
-    sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userFileDir, filename);
+    sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userSaveDir, filename);
 #endif
     PrintLog(PRINT_NORMAL, "Attempting to save user file: %s", fullFilePath);
 
@@ -1109,9 +1115,9 @@ bool32 RSDK::SKU::DeleteUserFile(const char *filename)
     if (strlen(customUserFileDir))
         sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", customUserFileDir, filename);
     else
-        sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userFileDir, filename);
+        sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userSaveDir, filename);
 #else
-    sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userFileDir, filename);
+    sprintf_s(fullFilePath, sizeof(fullFilePath), "%s%s", userSaveDir, filename);
 #endif
     PrintLog(PRINT_NORMAL, "Attempting to delete user file: %s", fullFilePath);
     int32 status = remove(fullFilePath);
@@ -1165,7 +1171,29 @@ void RSDK::SKU::InitUserDirectory()
 
 #elif RETRO_PLATFORM == RETRO_XBOX
 
+    // Data.rsdk and other shipped assets stay on the game disc (D:, read-only from DVD).
     SKU::SetUserFileCallbacks("D:\\", NULL, NULL);
+
+    // Persist writable files (config/saves/log) on the hard-drive save partition (E:)
+    // so the port works when booted from a read-only DVD. E:\UDATA\<title>\ is the
+    // standard writable location (same mount approach as Moonlight-XboxOG).
+    if (nxIsDriveMounted('E') || nxMountDrive('E', "\\Device\\Harddisk0\\Partition1\\")) {
+        CreateDirectoryA("E:\\UDATA", NULL);           // usually already present
+        CreateDirectoryA("E:\\UDATA\\4D530063", NULL); // per-title folder
+        strcpy(SKU::userSaveDir, "E:\\UDATA\\4D530063\\");
+
+        // Seed the shipped defaults onto E: on first boot: LoadSettingsINI only loads
+        // Data.rsdk when Settings.ini parses, so E: must have a copy before the first
+        // read. bFailIfExists=TRUE keeps any later user edits.
+        CopyFileA("D:\\Settings.ini", "E:\\UDATA\\4D530063\\Settings.ini", TRUE);
+
+        PrintLog(PRINT_NORMAL, "User save dir: %s", SKU::userSaveDir);
+    }
+    else {
+        // E: unavailable: fall back to D: (userSaveDir already defaults to it). Saves
+        // won't persist from DVD, but the game still runs.
+        PrintLog(PRINT_NORMAL, "WARNING: could not mount E: — user data stays on %s", SKU::userSaveDir);
+    }
 
 #else
 

@@ -400,12 +400,17 @@ void UserDBStorage_SaveCB8(int32 status);
 extern void (*preLoadSaveFileCB)();
 extern void (*postLoadSaveFileCB)();
 extern char userFileDir[0x100];
+// Writable user-data dir (config/saves/log). Defaults to userFileDir; only the
+// Xbox port overrides it (E:\UDATA\...) so those files land on a writable drive
+// while userFileDir keeps pointing at the read-only game disc (Data.rsdk).
+extern char userSaveDir[0x100];
 
 inline void SetUserFileCallbacks(const char *userDir, void (*preCB)(), void (*postCB)())
 {
     preLoadSaveFileCB  = preCB;
     postLoadSaveFileCB = postCB;
     strcpy(userFileDir, userDir);
+    strcpy(userSaveDir, userDir);
 }
 
 bool32 LoadUserFile(const char *filename, void *buffer, uint32 bufSize);

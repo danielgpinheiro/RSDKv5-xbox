@@ -289,7 +289,7 @@ void RSDK::LoadSettingsINI()
 #endif
 
     char pathBuffer[0x100];
-    sprintf_s(pathBuffer, sizeof(pathBuffer), "%sSettings.ini", SKU::userFileDir);
+    sprintf_s(pathBuffer, sizeof(pathBuffer), "%sSettings.ini", SKU::userSaveDir);
 #if RETRO_PLATFORM == RETRO_XBOX
 #endif
 
@@ -588,9 +588,7 @@ void RSDK::LoadSettingsINI()
 
 void RSDK::SaveSettingsINI(bool32 writeToFile)
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    return; // Xbox ISO is read-only; defaults are baked into the binary
-#endif
+    // Xbox writes to E:\UDATA (see InitUserDirectory); D: may be a read-only DVD.
     // the original only saves this file on windows and "dev", consoles use "options.bin"
     // for the decomp, however, we want to save it regardless of platform
 #if RETRO_USE_ORIGINAL_CODE
@@ -605,7 +603,7 @@ void RSDK::SaveSettingsINI(bool32 writeToFile)
 
     if (changedVideoSettings || writeToFile) {
         char pathBuffer[0x100];
-        sprintf_s(pathBuffer, sizeof(pathBuffer), "%sSettings.ini", SKU::userFileDir);
+        sprintf_s(pathBuffer, sizeof(pathBuffer), "%sSettings.ini", SKU::userSaveDir);
 
         dictionary *ini = iniparser_load(pathBuffer);
         FileIO *file    = fOpen(pathBuffer, "wb");
