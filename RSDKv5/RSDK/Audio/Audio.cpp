@@ -34,6 +34,8 @@ float linearInterpolationLookup[LINEAR_INTERPOLATION_LOOKUP_LENGTH];
 #include "SDL2/SDL2AudioDevice.cpp"
 #elif RETRO_AUDIODEVICE_SDL3
 #include "SDL3/SDL3AudioDevice.cpp"
+#elif RETRO_AUDIODEVICE_NXAUDIO
+#include "NXAudio/NXAudioDevice.cpp"
 #elif RETRO_AUDIODEVICE_PORT
 #include "PortAudio/PortAudioDevice.cpp"
 #elif RETRO_AUDIODEVICE_MINI

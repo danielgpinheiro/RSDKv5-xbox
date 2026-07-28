@@ -85,6 +85,17 @@ else
   LTO := y
 endif
 
+# Audio backend: nxdk-audio (MCPX APU hardware, default) vs SDL3/AC97 (AUDIO=sdl3).
+AUDIO ?= nxdk
+ifeq ($(AUDIO),nxdk)
+  RSDK_FLAGS += -DRSDK_USE_NXAUDIO
+  INCLUDES   += -I$(CURDIR)/dependencies/xbox/nxdk-audio/include
+  SRCS += \
+    $(CURDIR)/dependencies/xbox/nxdk-audio/audio_core.c \
+    $(CURDIR)/dependencies/xbox/nxdk-audio/audio_voice.c \
+    $(CURDIR)/dependencies/xbox/nxdk-audio/audio_buffer.c
+endif
+
 CFLAGS	+= $(EXTRA_OFLAGS) -Wall $(INCLUDES) $(RSDK_FLAGS)
 
 CXXFLAGS += $(CFLAGS) -Wpedantic

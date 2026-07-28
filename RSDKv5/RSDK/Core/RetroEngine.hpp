@@ -185,6 +185,9 @@ enum GameRegions {
 #ifndef RETRO_AUDIODEVICE_SDL3
 #define RETRO_AUDIODEVICE_SDL3 (0)
 #endif
+#ifndef RETRO_AUDIODEVICE_NXAUDIO
+#define RETRO_AUDIODEVICE_NXAUDIO (0)
+#endif
 #define RETRO_AUDIODEVICE_OBOE (0)
 #ifndef RETRO_AUDIODEVICE_PORT
 #define RETRO_AUDIODEVICE_PORT (0)
@@ -434,8 +437,15 @@ enum GameRegions {
 #undef RETRO_RENDERDEVICE_SDL3
 #define RETRO_RENDERDEVICE_SDL3 (1)
 
+// Audio: default to SDL3/AC97, but RSDK_USE_NXAUDIO routes it to the nxdk-audio
+// (MCPX APU) backend instead while render/input stay on SDL3.
+#ifdef RSDK_USE_NXAUDIO
+#undef RETRO_AUDIODEVICE_NXAUDIO
+#define RETRO_AUDIODEVICE_NXAUDIO (1)
+#else
 #undef RETRO_AUDIODEVICE_SDL3
 #define RETRO_AUDIODEVICE_SDL3 (1)
+#endif
 
 #undef RETRO_INPUTDEVICE_SDL3
 #define RETRO_INPUTDEVICE_SDL3 (1)
