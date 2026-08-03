@@ -31,6 +31,9 @@ cmake/
 
 # Safety
 *.rsdk
+# AI agent instructions — kept as local files only, never tracked
+CLAUDE.md
+AGENTS.md
 # Xbox: re-encoded loose FMVs staged to D:\Videos\ (large binary assets, kept local)
 Videos/
 Sonic Mania/Static/*
