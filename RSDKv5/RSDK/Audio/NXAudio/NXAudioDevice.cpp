@@ -59,15 +59,22 @@ bool32 AudioDevice::Init()
 
     audioState = false;
 
+    // The Xbox reset button does a WARM reset: the MCPX APU keeps running with the
+    // previous session's config and nxAudioShutdown never ran, so nxAudioInit would
+    // start on a dirty APU (-> muted after reset). Scrub it first. Safe on a cold
+    // boot too: nxAudioShutdown's frees are NULL-guarded and it only writes APU/AC97
+    // reset registers.
+    nxAudioShutdown();
+
     nxAudioInitParams params = { 0 };
     if (!nxAudioInit(&params)) {
         // debugPrint survives the perf build (logging compiled out) -> xbwatson,
         // so the APU bring-up on real hardware isn't blind.
-        debugPrint("NXAUDIO: nxAudioInit FAILED\n");
+        debugPrint("NXAUDIO: nxAudioInit FAILED (err=%d)\n", (int)nxAudioGetLastError());
         PrintLog(PRINT_NORMAL, "ERROR: nxAudioInit failed");
         return true;
     }
-    debugPrint("NXAUDIO: nxAudioInit OK\n");
+    debugPrint("NXAUDIO: nxAudioInit OK (post-scrub)\n");
 
     nxAudioFormat format    = {};
     format.sample_rate      = AUDIO_FREQUENCY; // APU hardware-resamples to the 48kHz device rate
@@ -110,6 +117,21 @@ void AudioDevice::FrameInit()
 {
     if (!nxReady)
         return;
+
+    // Underrun recovery: a long scene load starves this pump (FrameInit doesn't
+    // tick), both queued buffers drain, and the streaming voice STOPS — muted for
+    // the rest of the session, and queueing to a stopped voice can wedge the APU
+    // (suspected Blue Spheres freeze). If stopped, re-prime and restart instead of
+    // queueing. Check state BEFORE refilling so we never queue to a dead voice.
+    if (nxAudioVoiceGetState(&nxVoice) == NX_STOPPED) {
+        debugPrint("NXAUDIO: voice underran/stopped — restarting\n");
+        nxBuffersCompleted = 0;
+        nxNextFill         = 0;
+        FillChunk(0);
+        FillChunk(1);
+        nxAudioVoiceStart(&nxVoice);
+        return;
+    }
 
     while (nxBuffersCompleted > 0) {
         InterlockedDecrement(&nxBuffersCompleted);

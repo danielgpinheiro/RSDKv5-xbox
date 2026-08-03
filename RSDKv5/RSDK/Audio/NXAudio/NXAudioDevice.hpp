@@ -24,7 +24,11 @@ public:
         // Music streams share the persistent Data.rsdk handle with the main thread;
         // load synchronously (same reasoning as the SDL3 backend).
         (void)async;
+        // Breadcrumbs -> xbwatson: pinpoint whether the Blue Spheres freeze is in the
+        // stream load (these bracket it) or elsewhere (only the "begin" line shows).
+        debugPrint("NXAUDIO: stream load begin (sfx=%d)\n", (int)channel->soundID);
         LoadStream(channel);
+        debugPrint("NXAUDIO: stream load end\n");
     }
 
 private:
