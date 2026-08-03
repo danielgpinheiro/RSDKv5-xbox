@@ -1,11 +1,19 @@
-// nxdk-audio (MCPX APU) backend — Plan A: the engine still software-mixes every
-// channel into one stereo stream (ProcessAudioMixing); this backend outputs that
-// stream through a single hardware streaming voice on the APU instead of SDL/AC97.
+// nxdk-audio (MCPX APU) backend — Plan B: real mixing offload.
 //
-// The mixer runs in FrameInit() on the game thread and channel mutations
-// (PlaySfx/StopSfx/...) run on the same thread, so there is no mixer/mutator race
-// and LockAudioDevice can be a no-op. The only cross-context producer is the APU
-// completion callback, which merely flags a finished buffer (atomic counter).
+// Each RSDK channel drives its OWN hardware voice, so the APU performs the
+// resample / pitch / pan / volume / sum that the software mixer used to do on
+// the CPU (ProcessAudioMixing is no longer on the output path). SFX channels map
+// to NX_VOICE_TYPE_2D_STATIC voices submitted straight from the paged sfxList
+// pool (the library DMAs from malloc'd memory via scatter-gather); the single
+// music/stream channel drives one NX_VOICE_TYPE_2D_STREAM voice fed by the
+// engine's Vorbis ring.
+//
+// The engine still owns the channels[] array as the bookkeeping/allocation
+// layer (PlaySfx/StopSfx/SetChannelAttributes/... just write channel fields);
+// AudioDevice::FrameInit() reconciles the hardware voices against it once per
+// frame on the game thread. Channel mutation and the reconcile share that
+// thread, so LockAudioDevice is a no-op; the only cross-context producer is the
+// APU completion callback, which merely flags a finished music buffer.
 #define LockAudioDevice()   ((void)0)
 #define UnlockAudioDevice() ((void)0)
 
@@ -17,18 +25,25 @@ public:
     static bool32 Init();
     static void Release();
 
-    static void FrameInit(); // pumps the streaming voice (refills completed buffers)
+    static void FrameInit(); // reconcile hardware voices with channels[]; pump the music voice
+
+    // Stop every SFX voice immediately. The DATASET_SFX pool can be compacted on
+    // SFX load/unload (ClearStageSfx), which moves bytes under the APU's DMA — a
+    // voice must never be reading the pool when that happens. Call before mutating
+    // the pool.
+    static void StopSfxVoices();
+
+    // Hardware playback position (in mono samples) of an SFX channel — replaces
+    // channel->bufferPos, which the mixer no longer advances. Used by GetChannelPos.
+    static uint32 GetSfxPlaybackSamples(uint32 channel);
 
     inline static void HandleStreamLoad(ChannelInfo *channel, bool32 async)
     {
         // Music streams share the persistent Data.rsdk handle with the main thread;
-        // load synchronously (same reasoning as the SDL3 backend).
+        // load synchronously (same reasoning as the SDL3 backend). This fills the
+        // Vorbis ring; FrameInit then brings the music voice up from it.
         (void)async;
-        // Breadcrumbs -> xbwatson: pinpoint whether the Blue Spheres freeze is in the
-        // stream load (these bracket it) or elsewhere (only the "begin" line shows).
-        debugPrint("NXAUDIO: stream load begin (sfx=%d)\n", (int)channel->soundID);
         LoadStream(channel);
-        debugPrint("NXAUDIO: stream load end\n");
     }
 
 private:

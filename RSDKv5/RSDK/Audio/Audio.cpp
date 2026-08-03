@@ -642,7 +642,13 @@ uint32 RSDK::GetChannelPos(uint32 channel)
         return 0;
 
     if (channels[channel].state == CHANNEL_SFX)
+#if RETRO_AUDIODEVICE_NXAUDIO
+        // Plan B: the mixer no longer advances bufferPos — read the hardware voice's
+        // playback position (in mono samples) instead.
+        return AudioDevice::GetSfxPlaybackSamples(channel);
+#else
         return channels[channel].bufferPos;
+#endif
 
     if (channels[channel].state == CHANNEL_STREAM) {
         if (!vorbisInfo->current_loc_valid || vorbisInfo->current_loc < 0)
@@ -666,6 +672,13 @@ double RSDK::GetVideoStreamPos()
 void RSDK::ClearStageSfx()
 {
     LockAudioDevice();
+
+#if RETRO_AUDIODEVICE_NXAUDIO
+    // Plan B: the SFX voices DMA straight from the DATASET_SFX pool. Unloading stage
+    // SFX below (and the next stage's loads) can compact/overwrite that pool, so stop
+    // every hardware voice first — a voice must never be reading bytes as they move.
+    AudioDevice::StopSfxVoices();
+#endif
 
     for (int32 c = 0; c < CHANNEL_COUNT; ++c) {
         if (channels[c].state == CHANNEL_SFX || channels[c].state == (CHANNEL_SFX | CHANNEL_PAUSED)) {
