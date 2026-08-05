@@ -2878,6 +2878,14 @@ void RSDK::DrawSpriteFlipped(int32 x, int32 y, int32 width, int32 height, int32 
                 return;
             break;
     }
+
+#if RETRO_PLATFORM == RETRO_XBOX
+    // GPU offload for special-stage unscaled sprites (rings/HUD/effects): draw the
+    // sprite rect as a textured atlas quad instead of the software blit below.
+    if (RenderDevice::DrawSpriteFlippedGPU(x, y, width, height, sprX, sprY, direction, sheetID, inkEffect, alpha))
+        return;
+#endif
+
     int32 widthFlip  = width;
     int32 heightFlip = height;
 
@@ -3599,6 +3607,14 @@ void RSDK::DrawSpriteRotozoom(int32 x, int32 y, int32 pivotX, int32 pivotY, int3
     posY[2]           = y + ((scaledYMaxC - scaledX1) >> 9);
     posX[3]           = x + ((scaledXMaxC + scaledYMaxS) >> 9);
     posY[3]           = y + ((scaledYMaxC - scaledXMaxS) >> 9);
+
+#if RETRO_PLATFORM == RETRO_XBOX
+    // GPU offload for special-stage billboards: draw the transformed corners as a
+    // textured quad on the NV2A instead of the software fill below. Falls through
+    // when not applicable (not a special stage, unsupported ink, bake failed).
+    if (RenderDevice::DrawSpriteGPU(posX, posY, sprX, sprY, width, height, sheetID, inkEffect, alpha))
+        return;
+#endif
 
     int32 left = currentScreen->pitch;
     for (int32 i = 0; i < 4; ++i) {

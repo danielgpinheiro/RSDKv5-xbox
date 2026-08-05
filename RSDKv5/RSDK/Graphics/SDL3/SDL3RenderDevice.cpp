@@ -20,6 +20,461 @@ RenderVertex RenderDevice::vertexBuffer[!RETRO_REV02 ? 24 : 60];
 
 uint8 RenderDevice::lastTextureFormat = -1;
 
+// ============================================================================
+// 3D GPU offload (special stages)
+//
+// Draw3DScene appends its projected faces here as GPU triangles instead of
+// software-filling the RGB565 framebuffer. At present time we composite three
+// layers in the correct order: the framebuffer as it stood at the first 3D face
+// (background 2D) -> the 3D triangles (nxdk_xgu QueueGeometry) -> the 2D drawn
+// after the 3D (foreground: billboards/HUD), keyed transparent by diffing the
+// final framebuffer against that background snapshot. Occlusion among the 3D
+// polygons is identical to the CPU path (same face sort, replayed on the GPU);
+// only 3D-vs-2D-billboard depth is approximate. See the plan for the tradeoffs.
+// ============================================================================
+bool RenderDevice::gpu3DEnabled = true;
+
+namespace {
+struct Batch3D {
+    int32 start;
+    int32 count;
+    SDL_BlendMode blend;
+    SDL_Texture *tex; // NULL = untextured 3D face; else a baked sprite-frame texture
+};
+
+// Fixed, boot-allocated staging for the special-stage GPU layer. A std::vector
+// here reallocated as geometry grew around a curve and hit bad_alloc on the tight
+// 64MB heap (the G1-only crash); a fixed buffer allocated once at boot — when RAM
+// is plentiful — removes that. Overflow drops faces rather than growing/crashing.
+#define MAX_3D_VERTS   (24576)
+#define MAX_3D_BATCHES (1024)
+SDL_Vertex *scene3DVerts = NULL; // RenderDevice::Init allocates MAX_3D_VERTS
+int32 scene3DVertCount   = 0;
+Batch3D scene3DBatches[MAX_3D_BATCHES];
+int32 scene3DBatchCount  = 0;
+bool has3DThisFrame        = false;
+// True once a real 3D FACE (Draw3DScene solid geometry) has been emitted this frame —
+// distinct from has3DThisFrame (any GPU element, incl. sprites). Used to tell genuine
+// 3D gameplay from the special-stage 2D UI screens (results/SpecialClear, which draw
+// only sprites): the approximate bg->GPU->fg composite scrambles interleaved CPU
+// rectangles vs GPU sprites on those screens, so sprites there stay on the CPU path.
+bool had3DFacesThisFrame   = false;
+bool prevFrameHad3DFaces   = false; // had3DFacesThisFrame from the previous presented frame
+uint16 *bg3DBuffer         = NULL; // framebuffer snapshot at the first 3D face (screen 0)
+int32 bg3DPitch            = 0;
+int32 bg3DHeight           = 0;
+SDL_Texture *fg3DTexture   = NULL; // ARGB1555: post-3D 2D, alpha-keyed against bg3DBuffer
+
+inline SDL_BlendMode Ink3DToBlend(int32 inkEffect)
+{
+    switch (inkEffect) {
+        case INK_ALPHA:
+        case INK_BLEND: return SDL_BLENDMODE_BLEND;
+        case INK_ADD: return SDL_BLENDMODE_ADD;
+        default: return SDL_BLENDMODE_NONE; // NONE/SUB/TINT/MASKED -> opaque
+    }
+}
+
+inline uint32 RGB565to888(uint16 c)
+{
+    uint32 r5 = (c >> 11) & 0x1F, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
+    uint32 r8 = (r5 << 3) | (r5 >> 2), g8 = (g6 << 2) | (g6 >> 4), b8 = (b5 << 3) | (b5 >> 2);
+    return (r8 << 16) | (g8 << 8) | b8;
+}
+
+// Snapshot the current framebuffer as the 3D background (called on the first 3D
+// face of the frame — everything drawn before the 3D is "behind" it).
+void Snapshot3DBackground()
+{
+    int32 pitch = screens[0].pitch;
+    int32 h     = screens[0].size.y;
+    if (!bg3DBuffer || bg3DPitch != pitch || bg3DHeight != h) {
+        free(bg3DBuffer);
+        bg3DBuffer  = (uint16 *)malloc((size_t)pitch * h * sizeof(uint16));
+        bg3DPitch   = pitch;
+        bg3DHeight  = h;
+    }
+    if (bg3DBuffer)
+        memcpy(bg3DBuffer, screens[0].frameBuffer, (size_t)pitch * h * sizeof(uint16));
+}
+
+inline void Add3DVertex(float x, float y, uint32 rgb, float a) // untextured (3D face)
+{
+    SDL_Vertex *v  = &scene3DVerts[scene3DVertCount++];
+    v->position.x  = x;
+    v->position.y  = y;
+    v->color.r     = ((rgb >> 16) & 0xFF) / 255.0f;
+    v->color.g     = ((rgb >> 8) & 0xFF) / 255.0f;
+    v->color.b     = (rgb & 0xFF) / 255.0f;
+    v->color.a     = a;
+    v->tex_coord.x = 0.0f;
+    v->tex_coord.y = 0.0f;
+}
+
+inline void Add3DVertexUV(float x, float y, float u, float v, float a) // textured sprite (white * a)
+{
+    SDL_Vertex *vtx  = &scene3DVerts[scene3DVertCount++];
+    vtx->position.x  = x;
+    vtx->position.y  = y;
+    vtx->color.r     = 1.0f;
+    vtx->color.g     = 1.0f;
+    vtx->color.b     = 1.0f;
+    vtx->color.a     = a;
+    vtx->tex_coord.x = u;
+    vtx->tex_coord.y = v;
+}
+
+// Begin the special-stage GPU layer for this frame: snapshot the framebuffer as the
+// background (everything drawn before the first GPU element is "behind" it) and
+// reset the staging buffers. Triggered by the first 3D face OR sprite quad.
+inline void BeginGPUFrame()
+{
+    if (!has3DThisFrame) {
+        has3DThisFrame    = true;
+        scene3DVertCount  = 0;
+        scene3DBatchCount = 0;
+        Snapshot3DBackground();
+    }
+}
+
+// Fan-triangulate a face (verts already in 16.16 framebuffer/logical pixels) into
+// the fixed staging buffer, coalescing consecutive faces that share a blend mode.
+void Add3DFaceInternal(Vector2 *vertices, uint32 *colors, int32 vertCount, float a, SDL_BlendMode blend)
+{
+    if (vertCount < 3 || !scene3DVerts)
+        return; // points/lines aren't filled; no staging buffer -> CPU path
+
+    BeginGPUFrame();
+
+    int32 needed = (vertCount - 2) * 3;
+    if (scene3DVertCount + needed > MAX_3D_VERTS)
+        return; // out of staging room this frame — drop the face (no realloc, no crash)
+
+    // Can this face extend the previous batch (same blend, untextured, contiguous)?
+    bool coalesce = scene3DBatchCount > 0 && scene3DBatches[scene3DBatchCount - 1].blend == blend
+                    && scene3DBatches[scene3DBatchCount - 1].tex == NULL
+                    && scene3DBatches[scene3DBatchCount - 1].start + scene3DBatches[scene3DBatchCount - 1].count == scene3DVertCount;
+    if (!coalesce && scene3DBatchCount >= MAX_3D_BATCHES)
+        return; // no room for a new batch
+
+    int32 start = scene3DVertCount;
+    for (int32 t = 1; t + 1 < vertCount; ++t) {
+        Add3DVertex(vertices[0].x / 65536.0f, vertices[0].y / 65536.0f, colors[0], a);
+        Add3DVertex(vertices[t].x / 65536.0f, vertices[t].y / 65536.0f, colors[t], a);
+        Add3DVertex(vertices[t + 1].x / 65536.0f, vertices[t + 1].y / 65536.0f, colors[t + 1], a);
+    }
+    int32 count = scene3DVertCount - start;
+
+    if (coalesce)
+        scene3DBatches[scene3DBatchCount - 1].count += count;
+    else
+        scene3DBatches[scene3DBatchCount++] = { start, count, blend, NULL };
+
+    had3DFacesThisFrame = true; // genuine 3D geometry this frame (not just sprites)
+}
+
+// --- baked sprite-frame texture cache (special-stage billboards) -------------
+// Each scaled special-stage sprite frame is baked once into a small ARGB8888
+// texture (palette applied, index 0 transparent) with a 2px transparent border so
+// the reused DrawSpriteRotozoom posX/posY corners (which carry a +/-2px margin)
+// map onto UV [0,1] exactly. Drawn as textured GPU quads instead of the software
+// rotozoom fill — that fill is the special stage's ~40ms bottleneck.
+// All baked frames live in ONE atlas texture so the (interleaved) sprite quads
+// coalesce into ~1 draw batch instead of one texture-bind per frame — the per-batch
+// binds were the special stage's added present cost.
+#define MAX_BAKED_SPRITES (256)
+#define SPR_BORDER        (2)
+#define ATLAS_W           (512)
+#define ATLAS_H           (256)
+#define SPR_MAX_DIM       (160) // max padded frame dimension we can bake
+struct BakedSprite {
+    int32 sheetID, sprX, sprY, w, h;
+    float u0, v0, u1, v1; // normalized sub-rect in the atlas
+};
+BakedSprite bakedSprites[MAX_BAKED_SPRITES];
+int32 bakedSpriteCount       = 0;
+uint32 bakedPaletteSum       = 0;     // re-bake when the palette changes (fades/cycles)
+bool paletteCheckedThisFrame = false; // the checksum runs ONCE per frame, not per sprite
+SDL_Texture *spriteAtlas     = NULL;
+int32 atlasPackX = 0, atlasPackY = 0, atlasRowH = 0; // shelf packer
+
+void ClearBakedSprites() // reset the packer; the atlas texture is reused
+{
+    bakedSpriteCount = 0;
+    atlasPackX       = 0;
+    atlasPackY       = 0;
+    atlasRowH        = 0;
+}
+
+uint32 PaletteChecksum()
+{
+    uint32 s        = 0;
+    const uint16 *p = &fullPalette[0][0];
+    for (int32 i = 0; i < PALETTE_BANK_COUNT * PALETTE_BANK_SIZE; ++i) s += (uint32)(i + 1) * p[i];
+    return s;
+}
+
+// Bake one frame into the shared atlas (palette applied, 2px transparent border).
+// Returns the new BakedSprite index, or -1 (too big / atlas full).
+int32 BakeSpriteIntoAtlas(int32 sheetID, int32 sprX, int32 sprY, int32 w, int32 h, uint8 bank)
+{
+    GFXSurface *surface = &gfxSurface[sheetID];
+    if (!surface->pixels || w <= 0 || h <= 0)
+        return -1;
+    int32 tw = w + 2 * SPR_BORDER, th = h + 2 * SPR_BORDER;
+    if (tw > SPR_MAX_DIM || th > SPR_MAX_DIM || tw > ATLAS_W || bakedSpriteCount >= MAX_BAKED_SPRITES)
+        return -1;
+
+    if (!spriteAtlas) {
+        // STREAMING (not STATIC): STATIC textures are swizzled, and sub-rect updates
+        // to a swizzled texture didn't populate — sprites came out invisible. A
+        // streaming texture is linear; the xgu LockTexture returns a direct pointer
+        // into its persistent buffer, so sub-rect writes accumulate correctly.
+        spriteAtlas = SDL_CreateTexture(RenderDevice::renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, ATLAS_W, ATLAS_H);
+        if (!spriteAtlas)
+            return -1;
+        SDL_SetTextureScaleMode(spriteAtlas, SDL_SCALEMODE_NEAREST);
+        SDL_SetTextureBlendMode(spriteAtlas, SDL_BLENDMODE_BLEND);
+    }
+
+    if (atlasPackX + tw > ATLAS_W) { // next shelf
+        atlasPackX = 0;
+        atlasPackY += atlasRowH;
+        atlasRowH = 0;
+    }
+    if (atlasPackY + th > ATLAS_H)
+        return -1; // atlas full -> CPU fallback
+    int32 px = atlasPackX, py = atlasPackY;
+    atlasPackX += tw;
+    if (th > atlasRowH)
+        atlasRowH = th;
+
+    SDL_Rect region = { px, py, tw, th };
+    void *pix   = NULL;
+    int32 pitch = 0;
+    if (!SDL_LockTexture(spriteAtlas, &region, &pix, &pitch))
+        return -1;
+    uint16 *palette = fullPalette[bank & (PALETTE_BANK_COUNT - 1)];
+    uint8 *pixels   = surface->pixels;
+    int32 lineShift = surface->lineSize; // row stride = 1 << lineSize
+    uint32 *dst     = (uint32 *)pix;
+    int32 dstStride = pitch / (int32)sizeof(uint32);
+    for (int32 ty = 0; ty < th; ++ty) {
+        for (int32 tx = 0; tx < tw; ++tx) {
+            uint32 argb = 0; // transparent: the border and any index-0 pixels
+            int32 sx = tx - SPR_BORDER, sy = ty - SPR_BORDER;
+            if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
+                uint8 index = pixels[((sprY + sy) << lineShift) + (sprX + sx)];
+                if (index)
+                    argb = 0xFF000000u | RGB565to888(palette[index]);
+            }
+            dst[tx] = argb;
+        }
+        dst += dstStride;
+    }
+    SDL_UnlockTexture(spriteAtlas);
+
+    BakedSprite *b = &bakedSprites[bakedSpriteCount];
+    b->sheetID = sheetID;
+    b->sprX    = sprX;
+    b->sprY    = sprY;
+    b->w       = w;
+    b->h       = h;
+    b->u0      = (float)px / ATLAS_W;
+    b->v0      = (float)py / ATLAS_H;
+    b->u1      = (float)(px + tw) / ATLAS_W;
+    b->v1      = (float)(py + th) / ATLAS_H;
+    return bakedSpriteCount++;
+}
+
+BakedSprite *GetBakedSprite(int32 sheetID, int32 sprX, int32 sprY, int32 w, int32 h, uint8 bank)
+{
+    // Full-palette checksum ONCE per frame (on the first baked sprite) — reset in
+    // FlipScreen. Safe to clear here: no batch this frame uses the atlas regions yet.
+    if (!paletteCheckedThisFrame) {
+        paletteCheckedThisFrame = true;
+        uint32 sum              = PaletteChecksum();
+        if (sum != bakedPaletteSum) {
+            ClearBakedSprites();
+            bakedPaletteSum = sum;
+        }
+    }
+    for (int32 i = 0; i < bakedSpriteCount; ++i) {
+        BakedSprite *b = &bakedSprites[i];
+        if (b->sheetID == sheetID && b->sprX == sprX && b->sprY == sprY && b->w == w && b->h == h)
+            return b;
+    }
+    int32 idx = BakeSpriteIntoAtlas(sheetID, sprX, sprY, w, h, bank);
+    return idx >= 0 ? &bakedSprites[idx] : NULL;
+}
+
+// Is the current scene the UFO special stage? Matched purely on the scene *category*
+// "Special Stage" (set via SetScene("Special Stage", ...)). We deliberately do NOT
+// fall back to the scene folder: the Blue Spheres bonus stage lives in the same
+// "Special" data folder but is a light 2D checkerboard that runs fine on the CPU —
+// offloading it only adds GPU-composite present cost. Its category is "Blue Spheres"
+// (no "Special" substring), so the category check correctly excludes it. Cached per
+// frame (reset in FlipScreen) so the string search runs once, not per sprite.
+int8 inSpecialCache = -1;
+bool InSpecialStage()
+{
+    if (inSpecialCache < 0) {
+        inSpecialCache = 0;
+        if (sceneInfo.listCategory && strstr(sceneInfo.listCategory[sceneInfo.activeCategory].name, "Special"))
+            inSpecialCache = 1;
+    }
+    return inSpecialCache == 1;
+}
+
+// Map an ink effect to a GPU blend + vertex alpha; false = unsupported (CPU path).
+inline bool InkToSpriteBlend(int32 inkEffect, int32 alpha, SDL_BlendMode *blend, float *a)
+{
+    switch (inkEffect) {
+        case INK_NONE: *blend = SDL_BLENDMODE_NONE; *a = 1.0f; return true;
+        case INK_BLEND: *blend = SDL_BLENDMODE_BLEND; *a = 0.5f; return true;
+        case INK_ALPHA: *blend = SDL_BLENDMODE_BLEND; *a = (alpha > 0xFF ? 0xFF : (alpha < 0 ? 0 : alpha)) / 255.0f; return true;
+        case INK_ADD: *blend = SDL_BLENDMODE_ADD; *a = (alpha > 0xFF ? 0xFF : (alpha < 0 ? 0 : alpha)) / 255.0f; return true;
+        default: return false;
+    }
+}
+
+// Emit one atlas-textured quad (corners 0=TL,1=TR,2=BL,3=BR ; UVs u0,v0..u1,v1)
+// into the shared sprite batch. Returns true if emitted (or intentionally dropped
+// on a full staging buffer — caller must not also CPU-draw), false if unavailable.
+bool EmitAtlasQuad(float px0, float py0, float px1, float py1, float px2, float py2, float px3, float py3, float u0, float v0, float u1, float v1,
+                   float a, SDL_BlendMode blend)
+{
+    if (!scene3DVerts)
+        return false;
+    BeginGPUFrame();
+    if (scene3DVertCount + 6 > MAX_3D_VERTS)
+        return false; // staging full -> CPU draws it (visible, minor order glitch)
+
+    bool coalesce = scene3DBatchCount > 0 && scene3DBatches[scene3DBatchCount - 1].blend == blend
+                    && scene3DBatches[scene3DBatchCount - 1].tex == spriteAtlas
+                    && scene3DBatches[scene3DBatchCount - 1].start + scene3DBatches[scene3DBatchCount - 1].count == scene3DVertCount;
+    if (!coalesce && scene3DBatchCount >= MAX_3D_BATCHES)
+        return false;
+
+    int32 start = scene3DVertCount;
+    Add3DVertexUV(px0, py0, u0, v0, a);
+    Add3DVertexUV(px1, py1, u1, v0, a);
+    Add3DVertexUV(px2, py2, u0, v1, a);
+    Add3DVertexUV(px1, py1, u1, v0, a);
+    Add3DVertexUV(px3, py3, u1, v1, a);
+    Add3DVertexUV(px2, py2, u0, v1, a);
+    int32 count = scene3DVertCount - start;
+
+    if (coalesce)
+        scene3DBatches[scene3DBatchCount - 1].count += count;
+    else
+        scene3DBatches[scene3DBatchCount++] = { start, count, blend, spriteAtlas };
+    return true;
+}
+} // namespace
+
+bool RenderDevice::Use3DOffload()
+{
+    // Single-screen only (the special stage is screen 0); splitscreen keeps the CPU
+    // path. scene3DVerts NULL (boot allocation failed) also forces the CPU fallback.
+    // Only during live gameplay: when paused/frozen the pause menu draws its overlay
+    // and labels on the CPU, and mixing those into the bg->GPU->fg composite scrambles
+    // their draw order (labels landed in the GPU layer, behind the CPU overlay). Falling
+    // back to the pure software path for those states keeps menus correct (and the frozen
+    // scene has no perf cost worth offloading).
+    return gpu3DEnabled && scene3DVerts && videoSettings.screenCount == 1 && currentScreen == &screens[0]
+           && sceneInfo.state == ENGINESTATE_REGULAR;
+}
+
+void RenderDevice::Add3DFace(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect)
+{
+    uint32 rgb       = ((uint32)(r & 0xFF) << 16) | ((uint32)(g & 0xFF) << 8) | (uint32)(b & 0xFF);
+    uint32 colors[4] = { rgb, rgb, rgb, rgb };
+    SDL_BlendMode bl = Ink3DToBlend(inkEffect);
+    float a          = (bl == SDL_BLENDMODE_NONE) ? 1.0f : (alpha > 0xFF ? 0xFF : (alpha < 0 ? 0 : alpha)) / 255.0f;
+    if (vertCount > 4)
+        vertCount = 4;
+    Add3DFaceInternal(vertices, colors, vertCount, a, bl);
+}
+
+void RenderDevice::Add3DBlendedFace(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect)
+{
+    SDL_BlendMode bl = Ink3DToBlend(inkEffect);
+    float a          = (bl == SDL_BLENDMODE_NONE) ? 1.0f : (alpha > 0xFF ? 0xFF : (alpha < 0 ? 0 : alpha)) / 255.0f;
+    if (vertCount > 4)
+        vertCount = 4;
+    Add3DFaceInternal(vertices, colors, vertCount, a, bl);
+}
+
+// Called by DrawSpriteRotozoom after it has computed the 4 transformed corners
+// (posX/posY, screen-relative pixels = logical coords). In a UFO special stage, a
+// scaled billboard is baked once and drawn as a textured GPU quad here instead of
+// software-rasterized. Returns true if handled on the GPU; false -> CPU fallback.
+bool RenderDevice::DrawSpriteGPU(int32 *posX, int32 *posY, int32 sprX, int32 sprY, int32 width, int32 height, int32 sheetID, int32 inkEffect,
+                                 int32 alpha)
+{
+    // prevFrameHad3DFaces: only offload sprites during genuine 3D gameplay, so the
+    // special-stage results/UI screens (sprites only, no 3D) render fully on the CPU
+    // and keep their correct draw order (see had3DFacesThisFrame note).
+    if (!Use3DOffload() || !InSpecialStage() || !prevFrameHad3DFaces)
+        return false;
+    SDL_BlendMode blend;
+    float a;
+    if (!InkToSpriteBlend(inkEffect, alpha, &blend, &a))
+        return false;
+
+    // Palette bank at the sprite's top scanline (per-line palette assumed uniform).
+    int32 topY = posY[0];
+    for (int32 i = 1; i < 4; ++i)
+        if (posY[i] < topY)
+            topY = posY[i];
+    topY = topY < 0 ? 0 : (topY >= SCREEN_YSIZE ? SCREEN_YSIZE - 1 : topY);
+
+    BakedSprite *bs = GetBakedSprite(sheetID, sprX, sprY, width, height, gfxLineBuffer[topY]);
+    if (!bs)
+        return false; // bake failed / atlas full -> CPU
+
+    // Reuse the software rasterizer's exact 4 corners; the frame's full padded
+    // sub-rect (u0..v1, border included) maps onto them 1:1.
+    return EmitAtlasQuad((float)posX[0], (float)posY[0], (float)posX[1], (float)posY[1], (float)posX[2], (float)posY[2], (float)posX[3], (float)posY[3],
+                         bs->u0, bs->v0, bs->u1, bs->v1, a, blend);
+}
+
+// Unscaled sprites (DrawSpriteFlipped: rings, HUD, effects). Axis-aligned quad from
+// the sprite's screen rect; UVs are the frame's INNER sub-rect (excluding the 2px
+// bake border), flipped per direction. Shares the atlas -> same coalesced batch.
+bool RenderDevice::DrawSpriteFlippedGPU(int32 x, int32 y, int32 width, int32 height, int32 sprX, int32 sprY, int32 direction, int32 sheetID,
+                                        int32 inkEffect, int32 alpha)
+{
+    if (!Use3DOffload() || !InSpecialStage() || !prevFrameHad3DFaces || width <= 0 || height <= 0)
+        return false;
+    SDL_BlendMode blend;
+    float a;
+    if (!InkToSpriteBlend(inkEffect, alpha, &blend, &a))
+        return false;
+
+    int32 topY      = y < 0 ? 0 : (y >= SCREEN_YSIZE ? SCREEN_YSIZE - 1 : y);
+    BakedSprite *bs = GetBakedSprite(sheetID, sprX, sprY, width, height, gfxLineBuffer[topY]);
+    if (!bs)
+        return false;
+
+    float bu = (float)SPR_BORDER / ATLAS_W, bv = (float)SPR_BORDER / ATLAS_H;
+    float u0 = bs->u0 + bu, u1 = bs->u1 - bu, v0 = bs->v0 + bv, v1 = bs->v1 - bv;
+    if (direction & FLIP_X) {
+        float t = u0;
+        u0      = u1;
+        u1      = t;
+    }
+    if (direction & FLIP_Y) {
+        float t = v0;
+        v0      = v1;
+        v1      = t;
+    }
+
+    float fx0 = (float)x, fy0 = (float)y, fx1 = (float)(x + width), fy1 = (float)(y + height);
+    return EmitAtlasQuad(fx0, fy0, fx1, fy0, fx0, fy1, fx1, fy1, u0, v0, u1, v1, a, blend);
+}
+
 #define NORMALIZE(val, minVal, maxVal) ((float)(val) - (float)(minVal)) / ((float)(maxVal) - (float)(minVal))
 
 static void SDLCALL SDLLogOutput(void *userdata, int category, SDL_LogPriority priority, const char *message)
@@ -53,6 +508,12 @@ bool RenderDevice::Init()
     if (!SetupRendering() || !AudioDevice::Init())
         return false;
 
+    // Allocate the special-stage GPU staging buffer once, at boot, while RAM is
+    // plentiful (a mid-stage allocation would fail on the tight heap). NULL is
+    // handled everywhere as "GPU 3D unavailable -> CPU path".
+    if (!scene3DVerts)
+        scene3DVerts = (SDL_Vertex *)malloc(MAX_3D_VERTS * sizeof(SDL_Vertex));
+
     InitInputDevices();
     return true;
 }
@@ -61,6 +522,50 @@ void RenderDevice::CopyFrameBuffer()
 {
     int32 pitch    = 0;
     uint16 *pixels = NULL;
+
+#if RETRO_PLATFORM == RETRO_XBOX
+    // 3D frame: build the background (pre-3D snapshot) and foreground (post-3D 2D,
+    // alpha-keyed by diffing against the snapshot) layers for the composite present.
+    if (has3DThisFrame && bg3DBuffer) {
+        int32 w = screens[0].size.x, h = screens[0].size.y, fbPitch = screens[0].pitch;
+
+        void *bgPix = NULL;
+        if (screenTexture[0] && SDL_LockTexture(screenTexture[0], NULL, &bgPix, &pitch)) {
+            uint16 *dst = (uint16 *)bgPix;
+            uint16 *src = bg3DBuffer;
+            for (int32 y = 0; y < h; ++y) {
+                memcpy(dst, src, w * sizeof(uint16));
+                src += fbPitch;
+                dst += pitch / sizeof(uint16);
+            }
+            SDL_UnlockTexture(screenTexture[0]);
+        }
+
+        if (!fg3DTexture) {
+            fg3DTexture =
+                SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, (int)textureSize.x, (int)textureSize.y);
+            if (fg3DTexture) {
+                SDL_SetTextureScaleMode(fg3DTexture, SDL_SCALEMODE_NEAREST);
+                SDL_SetTextureBlendMode(fg3DTexture, SDL_BLENDMODE_BLEND);
+            }
+        }
+        void *fgPix = NULL;
+        if (fg3DTexture && SDL_LockTexture(fg3DTexture, NULL, &fgPix, &pitch)) {
+            uint32 *dst     = (uint32 *)fgPix;
+            uint16 *fb      = screens[0].frameBuffer;
+            uint16 *bg      = bg3DBuffer;
+            int32 dstStride = pitch / (int32)sizeof(uint32);
+            for (int32 y = 0; y < h; ++y) {
+                for (int32 x = 0; x < w; ++x) dst[x] = (fb[x] != bg[x]) ? (0xFF000000u | RGB565to888(fb[x])) : 0u;
+                fb += fbPitch;
+                bg += fbPitch;
+                dst += dstStride;
+            }
+            SDL_UnlockTexture(fg3DTexture);
+        }
+        return;
+    }
+#endif
 
     for (int32 s = 0; s < videoSettings.screenCount; ++s) {
         if (screenTexture[s] && SDL_LockTexture(screenTexture[s], NULL, (void **)&pixels, &pitch)) {
@@ -116,6 +621,12 @@ void RenderDevice::FlipScreen()
 {
 #if RETRO_PLATFORM == RETRO_XBOX
     LogFrameStats();
+    paletteCheckedThisFrame = false; // re-check the palette once next frame
+    inSpecialCache          = -1; // re-detect the special stage next frame
+    // Roll the 3D-face history forward: next frame's sprite offload gate keys off
+    // whether THIS frame drew real 3D geometry (i.e. we are in 3D gameplay).
+    prevFrameHad3DFaces = had3DFacesThisFrame;
+    had3DFacesThisFrame = false;
 #endif
 
     if (windowRefreshDelay > 0) {
@@ -131,6 +642,40 @@ void RenderDevice::FlipScreen()
     // pillarboxes in fullscreen from displaying garbage data.
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF);
     SDL_RenderClear(renderer);
+
+#if RETRO_PLATFORM == RETRO_XBOX
+    // 3D composite present: background 2D -> GPU 3D triangles -> foreground 2D.
+    // Coordinates are in the logical space (pixWidth x SCREEN_YSIZE) that the 3D
+    // vertices were projected into, so all three layers align.
+    if (has3DThisFrame) {
+        SDL_FRect dst3D = { 0.0f, 0.0f, (float)videoSettings.pixWidth, (float)SCREEN_YSIZE };
+        SDL_FRect src3D = { 0.0f, 0.0f, (float)screens[0].size.x, (float)screens[0].size.y };
+
+        if (screenTexture[0])
+            SDL_RenderTexture(renderer, screenTexture[0], &src3D, &dst3D);
+
+        for (int32 i = 0; i < scene3DBatchCount; ++i) {
+            SDL_SetRenderDrawBlendMode(renderer, scene3DBatches[i].blend);
+            SDL_RenderGeometry(renderer, scene3DBatches[i].tex, &scene3DVerts[scene3DBatches[i].start], scene3DBatches[i].count, NULL, 0);
+        }
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+        if (fg3DTexture)
+            SDL_RenderTexture(renderer, fg3DTexture, &src3D, &dst3D);
+
+        if (dimAmount < 1.0f) {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xFF - (uint8)(dimAmount * 0xFF));
+            SDL_RenderFillRect(renderer, NULL);
+        }
+
+        SDL_RenderPresent(renderer);
+
+        has3DThisFrame    = false;
+        scene3DVertCount  = 0;
+        scene3DBatchCount = 0;
+        return;
+    }
+#endif
 
     int32 startVert = 0;
     SDL_FRect src, dst;
@@ -253,6 +798,28 @@ void RenderDevice::Release(bool32 isRefresh)
         SDL_DestroyTexture(imageTexture);
     imageTexture = NULL;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    if (fg3DTexture)
+        SDL_DestroyTexture(fg3DTexture);
+    fg3DTexture       = NULL;
+    ClearBakedSprites();
+    if (spriteAtlas)
+        SDL_DestroyTexture(spriteAtlas);
+    spriteAtlas       = NULL;
+    bakedPaletteSum   = 0;
+    has3DThisFrame    = false;
+    scene3DVertCount  = 0;
+    scene3DBatchCount = 0;
+    if (!isRefresh) {
+        free(bg3DBuffer);
+        bg3DBuffer = NULL;
+        bg3DPitch  = 0;
+        bg3DHeight = 0;
+        free(scene3DVerts);
+        scene3DVerts = NULL;
+    }
+#endif
+
     if (!isRefresh) {
         if (displayInfo.displays)
             free(displayInfo.displays);
@@ -306,6 +873,12 @@ bool RenderDevice::CheckFPSCap()
     return false;
 }
 void RenderDevice::UpdateFPSCap() { prevTicks = curTicks; }
+void RenderDevice::SetFPSTarget(int32 fps)
+{
+    if (fps < 1)
+        fps = 1;
+    targetFreq = SDL_GetPerformanceFrequency() / fps;
+}
 
 void RenderDevice::InitVertexBuffer()
 {

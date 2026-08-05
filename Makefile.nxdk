@@ -109,9 +109,14 @@ include $(NXDK_DIR)/Makefile
 # SDL3 (nxdk-sdl3 submodule) — must come after the NXDK Makefile include
 include $(CURDIR)/dependencies/xbox/nxdk-sdl3/config_sdl.make
 
-# The engine draws <10 quads per frame — shrink the XGU vertex ring from its
-# 512KB default to reclaim contiguous RAM (every MB counts on 64MB)
-SDL3_FLAGS += -DSDL_XGU_VERTEX_BUFFER_SIZE=131072
+# XGU vertex ring (one contiguous arena shared across the 3 in-flight frames).
+# Normal 2D frames draw <10 quads, but the Scene3D GPU offload (special stages)
+# pushes thousands of colour triangles (12 bytes/vertex) through SDL_RenderGeometry.
+# At 128KB the arena overflowed mid-frame — arena_allocate() returns NULL and the
+# draw is silently dropped, which showed up as the 3D + foreground 2D flickering
+# while the tiny first-drawn background stayed put. 1MB holds ~29K verts/frame
+# across the 3 frames — comfortably above a heavy special stage (~15K).
+SDL3_FLAGS += -DSDL_XGU_VERTEX_BUFFER_SIZE=1048576
 
 # xemu completes AC97 buffers on a coarse timer (~10/s); with SDL's default 2048-frame
 # buffers audio throughput caps at ~20kHz and everything paced by audio (music, video)

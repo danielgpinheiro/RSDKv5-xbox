@@ -36,6 +36,8 @@ public:
     static void InitFPSCap();
     static bool CheckFPSCap();
     static void UpdateFPSCap();
+    // Retarget the busy-wait present cadence (e.g. 30 in the special stage, 60 elsewhere).
+    static void SetFPSTarget(int32 fps);
 
     static bool InitShaders();
     static void LoadShader(const char *fileName, bool32 linear);
@@ -51,6 +53,26 @@ public:
     static SDL_Texture *screenTexture[SCREEN_COUNT];
 
     static SDL_Texture *imageTexture;
+
+    // --- 3D GPU offload (special stages) --------------------------------------
+    // Draw3DScene emits its faces here (as GPU triangles) instead of software-
+    // rasterizing into the framebuffer; they're composited over the framebuffer at
+    // present time (background -> GPU 3D -> foreground). Compile-time fallback: set
+    // false to force the original software DrawFace path everywhere.
+    static bool gpu3DEnabled;
+    // True when the 3D layer should be offloaded this frame/screen (single-screen,
+    // screen 0). Draw3DScene checks this once to pick the GPU or CPU path.
+    static bool Use3DOffload();
+    // Mirror DrawFace / DrawBlendedFace, but append triangles to the 3D batch.
+    static void Add3DFace(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect);
+    static void Add3DBlendedFace(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect);
+    // Special-stage scaled-billboard offload: bake the frame and draw a textured GPU
+    // quad from the software rasterizer's 4 transformed corners. True = handled on GPU.
+    static bool DrawSpriteGPU(int32 *posX, int32 *posY, int32 sprX, int32 sprY, int32 width, int32 height, int32 sheetID, int32 inkEffect,
+                              int32 alpha);
+    // Unscaled (DrawSpriteFlipped) variant — axis-aligned quad. True = handled on GPU.
+    static bool DrawSpriteFlippedGPU(int32 x, int32 y, int32 width, int32 height, int32 sprX, int32 sprY, int32 direction, int32 sheetID,
+                                     int32 inkEffect, int32 alpha);
 
 private:
     static bool SetupRendering();

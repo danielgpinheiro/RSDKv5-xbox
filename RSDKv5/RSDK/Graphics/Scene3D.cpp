@@ -1,5 +1,7 @@
 #include "RSDK/Core/RetroEngine.hpp"
 
+#include <algorithm> // std::stable_sort (face depth sort)
+
 using namespace RSDK;
 
 #if RETRO_REV0U
@@ -877,28 +879,42 @@ void RSDK::Draw3DScene(uint16 sceneID)
         // This is an insertion sort, taken from here:
         // https://web.archive.org/web/20110108233032/http://rosettacode.org/wiki/Sorting_algorithms/Insertion_sort#C
 
-        Scene3DFace *a = scn->faceBuffer;
-
-        int i, j;
-        Scene3DFace temp;
-
-        for(i=1; i<scn->faceCount; i++)
-        {
-            temp = a[i];
-            j = i-1;
-            while(j>=0 && a[j].depth < temp.depth)
-            {
-                a[j+1] = a[j];
-                j -= 1;
-            }
-            a[j+1] = temp;
-        }
+        // Sort faces back-to-front (largest depth first) for painter's-order draw.
+        // std::stable_sort preserves the original insertion sort's tie behaviour
+        // (so coplanar faces keep their order) while dropping O(n^2) -> O(n log n);
+        // this cost becomes visible once the per-pixel fill moves to the GPU.
+        std::stable_sort(scn->faceBuffer, scn->faceBuffer + scn->faceCount,
+                         [](const Scene3DFace &x, const Scene3DFace &y) { return x.depth > y.depth; });
 
         // Finally, display the faces.
 
         uint8 *vertCnt = scn->faceVertCounts;
         Vector2 vertPos[4];
         uint32 vertClrs[4];
+
+        // On Xbox, offload the solid-fill draw modes to the GPU (Scene3D faces become
+        // GPU triangles composited at present) instead of software-rasterizing into
+        // the framebuffer. Wireframe modes stay on the CPU DrawLine path (cheap).
+#if RETRO_PLATFORM == RETRO_XBOX
+        bool gpu3D = RenderDevice::Use3DOffload();
+#define EMIT_FACE(v, n, R, G, B, A, INK)                                                                                                              \
+    do {                                                                                                                                             \
+        if (gpu3D)                                                                                                                                   \
+            RenderDevice::Add3DFace((v), (n), (R), (G), (B), (A), (INK));                                                                             \
+        else                                                                                                                                         \
+            DrawFace((v), (n), (R), (G), (B), (A), (INK));                                                                                            \
+    } while (0)
+#define EMIT_BLENDED(v, C, n, A, INK)                                                                                                                 \
+    do {                                                                                                                                             \
+        if (gpu3D)                                                                                                                                   \
+            RenderDevice::Add3DBlendedFace((v), (C), (n), (A), (INK));                                                                                \
+        else                                                                                                                                         \
+            DrawBlendedFace((v), (C), (n), (A), (INK));                                                                                              \
+    } while (0)
+#else
+#define EMIT_FACE(v, n, R, G, B, A, INK) DrawFace((v), (n), (R), (G), (B), (A), (INK))
+#define EMIT_BLENDED(v, C, n, A, INK)    DrawBlendedFace((v), (C), (n), (A), (INK))
+#endif
 
         switch (scn->drawMode) {
             default: break;
@@ -923,8 +939,8 @@ void RSDK::Draw3DScene(uint16 sceneID)
                         vertPos[v].x = (drawVert[v].x << 8) - (currentScreen->position.x << 16);
                         vertPos[v].y = (drawVert[v].y << 8) - (currentScreen->position.y << 16);
                     }
-                    DrawFace(vertPos, *vertCnt, (drawVert->color >> 16) & 0xFF, (drawVert->color >> 8) & 0xFF, (drawVert->color >> 0) & 0xFF,
-                             entity->alpha, entity->inkEffect);
+                    EMIT_FACE(vertPos, *vertCnt, (drawVert->color >> 16) & 0xFF, (drawVert->color >> 8) & 0xFF, (drawVert->color >> 0) & 0xFF,
+                              entity->alpha, entity->inkEffect);
                     vertCnt++;
                 }
                 break;
@@ -1010,7 +1026,7 @@ void RSDK::Draw3DScene(uint16 sceneID)
                     uint32 color = (r << 16) | (g << 8) | (b << 0);
 
                     drawVert = &scn->vertices[scn->faceBuffer[f].index];
-                    DrawFace(vertPos, *vertCnt, (color >> 16) & 0xFF, (color >> 8) & 0xFF, (color >> 0) & 0xFF, entity->alpha, entity->inkEffect);
+                    EMIT_FACE(vertPos, *vertCnt, (color >> 16) & 0xFF, (color >> 8) & 0xFF, (color >> 0) & 0xFF, entity->alpha, entity->inkEffect);
 
                     vertCnt++;
                 }
@@ -1047,7 +1063,7 @@ void RSDK::Draw3DScene(uint16 sceneID)
                         vertClrs[v] = (r << 16) | (g << 8) | (b << 0);
                     }
 
-                    DrawBlendedFace(vertPos, vertClrs, *vertCnt, entity->alpha, entity->inkEffect);
+                    EMIT_BLENDED(vertPos, vertClrs, *vertCnt, entity->alpha, entity->inkEffect);
 
                     vertCnt++;
                 }
@@ -1100,8 +1116,8 @@ void RSDK::Draw3DScene(uint16 sceneID)
                     }
 
                     if (v < 0xFF) {
-                        DrawFace(vertPos, *vertCnt, (drawVert[0].color >> 16) & 0xFF, (drawVert[0].color >> 8) & 0xFF,
-                                 (drawVert[0].color >> 0) & 0xFF, entity->alpha, entity->inkEffect);
+                        EMIT_FACE(vertPos, *vertCnt, (drawVert[0].color >> 16) & 0xFF, (drawVert[0].color >> 8) & 0xFF,
+                                  (drawVert[0].color >> 0) & 0xFF, entity->alpha, entity->inkEffect);
                     }
                     vertCnt++;
                 }
@@ -1202,7 +1218,7 @@ void RSDK::Draw3DScene(uint16 sceneID)
                         uint32 color = (r << 16) | (g << 8) | (b << 0);
 
                         drawVert = &scn->vertices[scn->faceBuffer[f].index];
-                        DrawFace(vertPos, *vertCnt, (color >> 16) & 0xFF, (color >> 8) & 0xFF, (color >> 0) & 0xFF, entity->alpha, entity->inkEffect);
+                        EMIT_FACE(vertPos, *vertCnt, (color >> 16) & 0xFF, (color >> 8) & 0xFF, (color >> 0) & 0xFF, entity->alpha, entity->inkEffect);
                     }
 
                     vertCnt++;
@@ -1252,12 +1268,15 @@ void RSDK::Draw3DScene(uint16 sceneID)
 
                     if (v < 0xFF) {
                         drawVert = &scn->vertices[scn->faceBuffer[f].index];
-                        DrawBlendedFace(vertPos, vertClrs, *vertCnt, entity->alpha, entity->inkEffect);
+                        EMIT_BLENDED(vertPos, vertClrs, *vertCnt, entity->alpha, entity->inkEffect);
                     }
 
                     vertCnt++;
                 }
                 break;
         }
+
+#undef EMIT_FACE
+#undef EMIT_BLENDED
     }
 }

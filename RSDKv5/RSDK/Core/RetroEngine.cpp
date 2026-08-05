@@ -22,6 +22,19 @@ void (*RSDK::globalVarsInitCB)(void *globals) = NULL;
 
 RetroEngine RSDK::engine = RetroEngine();
 
+#if RETRO_PLATFORM == RETRO_XBOX
+// True when the current scene is a UFO special stage (category "Special Stage").
+// Mirrors the render device's InSpecialStage(); used to switch the main loop to a
+// 30 Hz present cadence with a true-60 Hz simulation clock (adaptive frameskip).
+static bool InSpecialStageScene()
+{
+    if (!sceneInfo.listCategory || sceneInfo.activeCategory >= sceneInfo.categoryCount)
+        return false;
+    const char *n = sceneInfo.listCategory[sceneInfo.activeCategory].name;
+    return n && strstr(n, "Special") != NULL;
+}
+#endif
+
 int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 {
 #if RETRO_PLATFORM == RETRO_XBOX
@@ -123,6 +136,13 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 
         if (!RenderDevice::isRunning)
             break;
+
+#if RETRO_PLATFORM == RETRO_XBOX
+        // Special stage: present at 30 fps but keep the sim at a true 60 Hz (adaptive
+        // frameskip below). Everywhere else: normal 60 fps, one update per frame.
+        bool inSpecial = InSpecialStageScene();
+        RenderDevice::SetFPSTarget(inSpecial ? 30 : videoSettings.refreshRate);
+#endif
 
         if (RenderDevice::CheckFPSCap()) {
             RenderDevice::UpdateFPSCap();
@@ -272,6 +292,40 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
                     if (engine.devMenu)
                         ProcessDebugCommands();
 
+#if RETRO_PLATFORM == RETRO_XBOX
+                    // Adaptive frameskip for the special stage: run as many 60 Hz update
+                    // ticks as real wall-clock time has elapsed (ProcessEngine draws only
+                    // once regardless), so the sim stays at true speed while we present at
+                    // ~30 fps. Clamp 1..3 and drop backlog to avoid a spiral of death.
+                    {
+                        static bool wasSpecial   = false;
+                        static uint64 lastSimTick = 0;
+                        static double simAccum    = 0.0;
+                        if (inSpecial) {
+                            uint64 now = SDL_GetPerformanceCounter();
+                            if (wasSpecial && lastSimTick)
+                                simAccum += (double)(now - lastSimTick) / (double)SDL_GetPerformanceFrequency() * 60.0;
+                            lastSimTick = now;
+                            int32 ticks = (int32)simAccum;
+                            if (ticks < 1)
+                                ticks = 1;
+                            if (ticks > 3) {
+                                ticks    = 3;
+                                simAccum = 0.0;
+                            }
+                            else
+                                simAccum -= ticks;
+                            engine.gameSpeed = ticks;
+                        }
+                        else if (wasSpecial) {
+                            engine.gameSpeed = 1;
+                            simAccum         = 0.0;
+                            lastSimTick      = 0;
+                        }
+                        wasSpecial = inSpecial;
+                    }
+#endif
+
 #if RETRO_REV0U
                     switch (engine.version) {
                         default:
@@ -355,9 +409,6 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
 
 void RSDK::ProcessEngine()
 {
-#if RETRO_PLATFORM == RETRO_XBOX
-    { static int32 lastSt; if (sceneInfo.state != lastSt) { debugPrint("P%d\n", sceneInfo.state); lastSt = sceneInfo.state; } }
-#endif
     switch (sceneInfo.state) {
         default: break;
 
