@@ -42,7 +42,13 @@ bool32 RSDK::InitStorage()
     // guards keep the game running — sounds/sprites drop rather than crash).
     dataStorage[DATASET_STG].storageLimit = 14 * 1024 * 1024; // 14MB: Main Menu peaks ~13.7MB (all 5 characters) — must fit or it black-screens
     dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024; // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
+#ifdef RSDK_USE_NXAUDIO
+    // SFX ship as Xbox ADPCM (loose D:\SoundFXAD\, ~1/4 the S16 size): global set ~1.4MB
+    // + a stage's SFX. 3MB leaves margin (incl. any pack-PCM fallback); frees ~4MB.
+    dataStorage[DATASET_SFX].storageLimit = 3 * 1024 * 1024; //  3MB (was 7MB S16 PCM)
+#else
     dataStorage[DATASET_SFX].storageLimit = 7 * 1024 * 1024; //  7MB: 68 global sfx (S16, ~5.9MB); menu VO beyond this drops (guarded, not fatal)
+#endif
     dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024; //  1MB
     dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024 + 512 * 1024; //  2.5MB (scene decompression needs ~2.2MB)
 

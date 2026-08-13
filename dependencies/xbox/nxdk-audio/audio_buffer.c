@@ -168,7 +168,16 @@ static bool insert_buffer_to_ssl (nxAudioVoice *voice, const nxAudioBuffer *buff
 static bool insert_buffer_to_sge (nxAudioVoice *voice, const nxAudioBuffer *buffer)
 {
     const uint8_t *virtual_address = (const uint8_t *)buffer->buffer;
-    const uint32_t total_samples = apu_format_bytes_to_blocks(&voice->format, buffer->size_bytes);
+    // EBO is in samples. Prefer the caller's exact sample_count (ADPCM data is block-padded,
+    // so deriving from bytes would play/loop through the final block's padding). Otherwise
+    // derive from bytes: apu_format_bytes_to_blocks() returns BLOCKS for ADPCM but SAMPLES
+    // for PCM, so expand ADPCM blocks to samples (64/block; the streaming SSL path also does).
+    uint32_t total_samples = buffer->sample_count;
+    if (total_samples == 0) {
+        total_samples = apu_format_bytes_to_blocks(&voice->format, buffer->size_bytes);
+        if (voice->format.codec == NX_AUDIO_CODEC_ADPCM)
+            total_samples *= 64;
+    }
     const uint32_t ebo = total_samples - 1;
     const uint32_t needed_sges =
         (((uintptr_t)virtual_address & (PAGE_SIZE - 1)) + buffer->size_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -206,7 +215,7 @@ static bool insert_buffer_to_sge (nxAudioVoice *voice, const nxAudioBuffer *buff
     apu_write_reg(APU_VP_OFFSET + NV1BA0_PIO_SET_CURRENT_VOICE, voice->voice_index);
     apu_write_reg(APU_VP_OFFSET + NV1BA0_PIO_VOICE_LOCK, 1);
     apu_write_reg(APU_VP_OFFSET + NV1BA0_PIO_SET_VOICE_CFG_BUF_BASE, (voice->sge_base * PAGE_SIZE) + first_page_offset);
-    apu_write_reg(APU_VP_OFFSET + NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO, 0);
+    apu_write_reg(APU_VP_OFFSET + NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO, buffer->loop_start); // loop begin (samples)
     apu_write_reg(APU_VP_OFFSET + NV1BA0_PIO_SET_VOICE_BUF_CBO, 0);
     apu_write_reg(APU_VP_OFFSET + NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO, ebo);
     apu_write_reg(APU_VP_OFFSET + NV1BA0_PIO_VOICE_LOCK, 0);
@@ -223,6 +232,8 @@ bool nxAudioBufferInitialize (nxAudioBuffer *buffer, const void *user_buffer, ui
 
     buffer->buffer = user_buffer;
     buffer->size_bytes = size_bytes;
+    buffer->sample_count = 0; // default: derive length from size_bytes (caller may override)
+    buffer->loop_start = 0;   // default: loop the whole buffer (caller may override)
     return true;
 }
 

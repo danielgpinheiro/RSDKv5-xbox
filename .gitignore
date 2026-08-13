@@ -277,3 +277,6 @@ loader/**
 .DS_Store
 build-xbox.sh
 clean-xbox.sh
+
+# Generated loose Xbox-ADPCM SFX (rebuild with tools/xbadpcm.py from an extracted Data.rsdk)
+SoundFXAD/

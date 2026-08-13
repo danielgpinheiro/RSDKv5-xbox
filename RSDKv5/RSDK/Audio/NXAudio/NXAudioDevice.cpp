@@ -29,6 +29,7 @@ static bool32 sfxVoiceOk[CHANNEL_COUNT];
 static uint8 sfxPhase[CHANNEL_COUNT];
 static int32 sfxCachePlay[CHANNEL_COUNT];  // last-seen channel->playIndex
 static int16 sfxCacheSound[CHANNEL_COUNT]; // last-seen channel->soundID
+static uint8 sfxVoiceCodec[CHANNEL_COUNT]; // this voice's current codec: 0 = PCM, 1 = ADPCM
 
 // --- Music: one streaming hardware voice for the (single) stream channel ------
 // Brought up lazily on the first stream, then kept ALWAYS running (feeding
@@ -82,9 +83,40 @@ static void SubmitSfx(int32 i, ChannelInfo *ch)
         return;
     }
 
-    // DMA straight from the paged SFX pool (mono S16); no copy.
-    nxAudioBufferInitialize(&sfxBufs[i], sfxList[sfx].buffer, (uint32)(sfxList[sfx].length * sizeof(int16)));
-    nxAudioVoiceSetLooping(&sfxVoices[i], ch->loop != (uint32)-1);
+    // SFX ship as Xbox ADPCM (loose D:\SoundFXAD\, ~1/4 the RAM); a missing loose file
+    // falls back to pack S16 PCM. sfxADPCMSize[sfx] > 0 => ADPCM (that many bytes); 0 => PCM.
+    bool32 isADPCM = sfxADPCMSize[sfx] > 0;
+    uint32 bytes   = isADPCM ? sfxADPCMSize[sfx] : (uint32)(sfxList[sfx].length * sizeof(int16));
+
+    // Voices are created PCM; retune the format only when this SFX's codec differs from the
+    // voice's current one (nxAudioVoiceSetFormat needs a STOPPED voice, guaranteed here).
+    uint8 want = isADPCM ? 1 : 0;
+    if (sfxVoiceCodec[i] != want) {
+        nxAudioFormat f    = {};
+        f.sample_rate      = AUDIO_FREQUENCY;
+        f.channels         = 1;
+        f.bytes_per_sample = sizeof(int16);
+        f.codec            = isADPCM ? NX_AUDIO_CODEC_ADPCM : NX_AUDIO_CODEC_PCM;
+        f.type             = NX_VOICE_TYPE_2D_STATIC;
+        nxAudioVoiceSetFormat(&sfxVoices[i], &f);
+        sfxVoiceCodec[i] = want;
+    }
+
+    // DMA straight from the paged SFX pool; no copy.
+    nxAudioBufferInitialize(&sfxBufs[i], sfxList[sfx].buffer, bytes);
+    sfxBufs[i].sample_count = (uint32)sfxList[sfx].length; // exact length -> no block-padding tail click
+
+    // Loop from RSDK's loop point (ch->loop, in samples), not the whole buffer — a short
+    // looping SFX (e.g. GHZ waterfall) buzzes if the seam isn't the real loop point. ADPCM
+    // loop-begin must be block-aligned (64 samples).
+    bool32 looping = ch->loop != (uint32)-1;
+    if (looping) {
+        uint32 loopStart = ch->loop;
+        if (isADPCM)
+            loopStart &= ~63u;
+        sfxBufs[i].loop_start = loopStart;
+    }
+    nxAudioVoiceSetLooping(&sfxVoices[i], looping);
     ApplyChannelParams(&sfxVoices[i], ch, true);
 
     if (!nxAudioBufferSubmit(&sfxVoices[i], &sfxBufs[i])) {
@@ -254,6 +286,7 @@ bool32 AudioDevice::Init()
         sfxPhase[i]      = NX_SLOT_FREE;
         sfxCachePlay[i]  = -1;
         sfxCacheSound[i] = -1;
+        sfxVoiceCodec[i] = 0; // created PCM (sfxFmt.codec); SubmitSfx retunes to ADPCM per-SFX
         if (sfxVoiceOk[i])
             ++sfxCreated;
     }

@@ -88,6 +88,14 @@ typedef struct nxAudioBuffer
 {
     const void *buffer;
     uint32_t size_bytes;
+    // Optional exact decoded length in samples (per channel). 0 = derive from size_bytes.
+    // Useful for ADPCM, whose data is block-padded: without this the voice plays the
+    // padding at the end of the final block (an audible click, and a seam click on loops).
+    uint32_t sample_count;
+    // Optional loop-begin offset in samples (for looping voices). 0 = loop the whole
+    // buffer. For ADPCM this MUST be block-aligned (a multiple of 64) since blocks carry
+    // independent decoder state.
+    uint32_t loop_start;
 } nxAudioBuffer;
 
 /**

@@ -131,7 +131,7 @@ CXXFLAGS += $(SDL3_FLAGS)
 main.exe: libSDL3.lib
 
 # Bundle Data.rsdk in the ISO
-$(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini stage_videos
+$(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini stage_videos stage_soundfxad
 
 $(OUTPUT_DIR)/Data.rsdk: $(CURDIR)/Data.rsdk | $(OUTPUT_DIR)
 	cp "$<" "$@"
@@ -148,6 +148,17 @@ stage_videos: | $(OUTPUT_DIR)
 	  echo "[ VIDEOS   ] staging Videos/ -> ISO"; \
 	  mkdir -p "$(OUTPUT_DIR)/Videos"; \
 	  cp -R "$(CURDIR)/Videos/." "$(OUTPUT_DIR)/Videos/"; \
+	fi
+
+# Bundle loose Xbox-ADPCM SFX at D:\SoundFXAD\ (converted offline by tools/xbadpcm.py).
+# The nxaudio backend loads these in preference to the pack's PCM WAVs (~1/4 the RAM);
+# absent folder -> the engine falls back to the pack, so this staging is conditional.
+.PHONY: stage_soundfxad
+stage_soundfxad: | $(OUTPUT_DIR)
+	@if [ -d "$(CURDIR)/SoundFXAD" ]; then \
+	  echo "[ SFXADPCM ] staging SoundFXAD/ -> ISO"; \
+	  mkdir -p "$(OUTPUT_DIR)/SoundFXAD"; \
+	  cp -R "$(CURDIR)/SoundFXAD/." "$(OUTPUT_DIR)/SoundFXAD/"; \
 	fi
 
 clean_local:

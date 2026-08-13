@@ -17,6 +17,13 @@ stb_vorbis_alloc vorbisAlloc;
 SFXInfo RSDK::sfxList[SFX_COUNT];
 ChannelInfo RSDK::channels[CHANNEL_COUNT];
 
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+// Per-SFX storage format for the APU backend: >0 = the buffer holds that many bytes of
+// Xbox ADPCM (loose D:\SoundFXAD\ file); 0 = plain S16 PCM (pack fallback). Declared
+// before the NXAudioDevice.cpp include below so SubmitSfx can read it (same TU).
+uint32 sfxADPCMSize[SFX_COUNT] = { 0 };
+#endif
+
 char streamFilePath[0x40];
 uint8 *streamBuffer    = NULL;
 int32 streamBufferSize = 0;
@@ -348,6 +355,75 @@ int32 RSDK::PlayStream(const char *filename, uint32 slot, uint32 startPos, uint3
 #define WAV_SIG_HEADER (0x46464952) // RIFF
 #define WAV_SIG_DATA   (0x61746164) // data
 
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+// Load a loose Xbox-ADPCM SFX from D:\SoundFXAD\<filename> (converted offline; ~1/4 the
+// RAM of S16 PCM). Walks the RIFF chunks generically (the ADPCM fmt chunk is larger and
+// has a fact chunk, so the pack loader's fixed offsets don't fit). Returns true when the
+// slot is fully populated as ADPCM; false -> caller falls back to the pack PCM WAV.
+static bool32 LoadSfxADPCMLoose(const char *filename, uint8 slot, uint8 plays, uint8 scope, uint32 *hash)
+{
+    char fn[0x60];
+    int32 n = 0;
+    for (; filename[n] && n < (int32)sizeof(fn) - 1; ++n) fn[n] = (filename[n] == '/') ? '\\' : filename[n];
+    fn[n] = '\0';
+
+    char loosePath[0x80];
+    sprintf_s(loosePath, sizeof(loosePath), "D:\\SoundFXAD\\%s", fn);
+
+    FileInfo info;
+    InitFileInfo(&info);
+    info.externalFile = true; // plain fOpen of the absolute path, never the data pack (cf. Video.cpp)
+    if (!LoadFile(&info, loosePath, FMODE_RB))
+        return false;
+
+    if (ReadInt32(&info, false) != WAV_SIG_HEADER) { // 'RIFF'
+        CloseFile(&info);
+        return false;
+    }
+
+    uint32 sampleCount = 0, dataOffset = 0, dataSize = 0;
+    bool32 isXbAdpcm = false;
+    int32 pos        = 12; // skip RIFF(4) + size(4) + 'WAVE'(4)
+    while (pos + 8 <= info.fileSize) {
+        Seek_Set(&info, pos);
+        char id[4];
+        ReadBytes(&info, id, 4);
+        uint32 sz = ReadInt32(&info, false);
+        if (id[0] == 'f' && id[1] == 'm' && id[2] == 't' && id[3] == ' ')
+            isXbAdpcm = (ReadInt16(&info) == 0x0069);
+        else if (id[0] == 'f' && id[1] == 'a' && id[2] == 'c' && id[3] == 't')
+            sampleCount = ReadInt32(&info, false);
+        else if (id[0] == 'd' && id[1] == 'a' && id[2] == 't' && id[3] == 'a') {
+            dataOffset = pos + 8;
+            dataSize   = sz;
+        }
+        pos += 8 + (int32)sz + (int32)(sz & 1);
+    }
+
+    if (!isXbAdpcm || !dataSize || !sampleCount) {
+        CloseFile(&info);
+        return false;
+    }
+
+    AllocateStorage((void **)&sfxList[slot].buffer, dataSize, DATASET_SFX, false);
+    if (!sfxList[slot].buffer) {
+        PrintLog(PRINT_ERROR, "Unable to allocate ADPCM sfx buffer (%u B): %s", dataSize, filename);
+        CloseFile(&info);
+        return false;
+    }
+    Seek_Set(&info, dataOffset);
+    ReadBytes(&info, (void *)sfxList[slot].buffer, dataSize);
+    CloseFile(&info);
+
+    HASH_COPY_MD5(sfxList[slot].hash, hash);
+    sfxList[slot].scope              = scope;
+    sfxList[slot].maxConcurrentPlays = plays;
+    sfxList[slot].length             = sampleCount;
+    sfxADPCMSize[slot]               = dataSize;
+    return true;
+}
+#endif
+
 void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
 {
     FileInfo info;
@@ -359,8 +435,15 @@ void RSDK::LoadSfxToSlot(char *filename, uint8 slot, uint8 plays, uint8 scope)
     RETRO_HASH_MD5(hash);
     GEN_HASH_MD5(filename, hash);
 
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+    // Prefer the loose Xbox-ADPCM SFX (1/4 the pool footprint); fall back to the pack WAV.
+    if (LoadSfxADPCMLoose(filename, slot, plays, scope, hash))
+        return;
+#endif
+
     if (LoadFile(&info, fullFilePath, FMODE_RB)) {
-#if RETRO_PLATFORM == RETRO_XBOX
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+        sfxADPCMSize[slot] = 0; // pack fallback -> plain S16 PCM in this slot
 #endif
         HASH_COPY_MD5(sfxList[slot].hash, hash);
         sfxList[slot].scope              = scope;
