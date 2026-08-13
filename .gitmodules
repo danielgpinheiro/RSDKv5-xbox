@@ -21,3 +21,6 @@
 	path = dependencies/xbox/nxdk-sdl3
 	url = https://github.com/danielgpinheiro/nxdk-sdl3
 	branch = rsdkv5-xbox
+[submodule "dependencies/all/pl_mpeg"]
+	path = dependencies/all/pl_mpeg
+	url = https://github.com/danielgpinheiro/pl_mpeg.git
