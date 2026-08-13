@@ -134,6 +134,20 @@ bool nxAudioVoiceCreate (nxAudioVoice *voice, const nxAudioFormat *format)
 
     voice->cfg_fmt |= APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_FMT_HEADROOM, 7);
 
+    // Route the voice's volume slots to the mixbins the GP-DSP passthrough actually reads.
+    // The passthrough sums bins 6/8 -> LEFT and 7/9 -> RIGHT (see audio_core.c
+    // SET_HRTF_SUBMIXES), so a 2D voice's front-left (slot 0) must land on bin 6 and
+    // front-right (slot 1) on bin 7. WITHOUT this, the memset above leaves cfg_vbin=0, so
+    // EVERY slot targets mixbin 0 — which the passthrough never reads — and 2D voices are
+    // silent on real hardware (the VP still "plays" them, but their output never reaches
+    // the AC97 buffer). 3D/HRTF voices re-derive this in nxAudioVoiceSetHRTFTarget, and the
+    // VP force-overrides bins 0-3 for them anyway, so this default is safe for both.
+    //   slot0=FL->6  slot1=FR->7  slot2=C->8  slot3=LFE->9  slot4=RL->10  slot5=RR->0
+    voice->cfg_vbin = APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_VBIN_V0BIN, 6) | APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_VBIN_V1BIN, 7) |
+                      APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_VBIN_V2BIN, 8) | APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_VBIN_V3BIN, 9) |
+                      APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_VBIN_V4BIN, 10) | APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_VBIN_V5BIN, 0);
+    voice->cfg_fmt |= APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_FMT_V6BIN, 1) | APU_MAKE_VALUE(NV_PAVS_VOICE_CFG_FMT_V7BIN, 2);
+
     // Enable notification IRQ?
     voice->cfg_misc |= (1 << 23);
 

@@ -339,8 +339,25 @@ bool nxAudioInit (const nxAudioInitParams *parameters)
         InterlockedPushEntrySList(&g_idle_voice_free_list, &g_idle_voice_entries[i].list_entry);
     }
 
+// APU DMA buffers are read/written by the MCPX APU HARDWARE: the VP voice tables,
+// the GP-DSP code + scatter-gather tables, the completion notifiers, and the AC97
+// output buffer. On real silicon these MUST be non-cached, or two coherency bugs bite
+// (both invisible in xemu, which has no CPU-cache model): (1) the hardware reads STALE
+// CPU-written data — the GP-DSP loads its passthrough code from g_hw_gp_pmem and its
+// SGE tables ONCE at init, so if those CPU writes are still sitting in cache the DSP
+// executes zeros and never fills the AC97 buffer; (2) CPU diagnostics read STALE
+// hardware-written data — a peak-scan of g_hw_ac97_buffer reads zeroed cache lines
+// even while the physical buffer AC97 plays from holds real audio. PAGE_NOCACHE matches
+// nxdk's own bus-master DMA idiom (lib/usb .../usbh_xbox.c). Define NXAUDIO_CACHED_DMA=1
+// to revert to the old cached allocation for A/B comparison on hardware.
+#if defined(NXAUDIO_CACHED_DMA) && NXAUDIO_CACHED_DMA
+#define NXAUDIO_APU_ALLOC_PROT (PAGE_READWRITE)
+#else
+#define NXAUDIO_APU_ALLOC_PROT (PAGE_READWRITE | PAGE_NOCACHE)
+#endif
+
 #define APU_ALLOC(ptr, size, align)                                                                                    \
-    ptr = (void *)MmAllocateContiguousMemoryEx((size), 0, 0xFFFFFFFF, (align), PAGE_READWRITE);                        \
+    ptr = (void *)MmAllocateContiguousMemoryEx((size), 0, 0xFFFFFFFF, (align), NXAUDIO_APU_ALLOC_PROT);                \
     if (!(ptr)) {                                                                                                      \
         nxAudioShutdown();                                                                                             \
         apu_set_last_error(NX_AUDIO_ERR_OUT_OF_MEMORY);                                                                \

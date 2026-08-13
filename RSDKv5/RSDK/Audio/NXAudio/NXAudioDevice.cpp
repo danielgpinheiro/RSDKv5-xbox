@@ -280,6 +280,26 @@ bool32 AudioDevice::Init()
     sfxFmt.codec            = NX_AUDIO_CODEC_PCM;
     sfxFmt.type             = NX_VOICE_TYPE_2D_STATIC;
 
+    // Every voice needs an amplitude envelope that snaps to full and HOLDS, or real
+    // hardware gates the voice to silence: the VP's amplitude (EACUR) starts at 0 and an
+    // unconfigured envelope has attack rate 0 (0 = never opens), so a "playing" voice
+    // reads samples but outputs zero into the mixbins — exactly what the hardware
+    // diagnostics showed (VP position advances, mixPeak=0, GP emits silence). xemu ignores
+    // the envelope entirely, which is why audio worked there but not on the console.
+    // Fast attack (max rate), no decay, full sustain; fast release so stopped voices don't
+    // linger. Voices are STOPPED here (just created), which SetAmplitudeEnvelope requires.
+    // NOTE: these fields are DURATIONS in 512-sample units (~10.7 ms each), NOT rates —
+    // higher = SLOWER. The hardware voice readout proved 0xFFF is a ~40 s fade-in. Use a
+    // tiny attack so the envelope snaps to full almost instantly (≈11 ms), full sustain,
+    // and a short release so stopped voices don't linger.
+    nxAudioADSR fullOpenEnv    = {};
+    fullOpenEnv.delay_time     = 0;
+    fullOpenEnv.attack_time    = 1;   // ~11 ms to full (near-instant, still reliably opens)
+    fullOpenEnv.hold_time      = 0;
+    fullOpenEnv.decay_time     = 0;   // no decay => hold at peak
+    fullOpenEnv.sustain_level  = 255; // 255 = 100%
+    fullOpenEnv.release_time   = 1;   // ~11 ms release on stop
+
     int32 sfxCreated = 0;
     for (int32 i = 0; i < CHANNEL_COUNT; ++i) {
         sfxVoiceOk[i]    = nxAudioVoiceCreate(&sfxVoices[i], &sfxFmt) ? true : false;
@@ -287,8 +307,10 @@ bool32 AudioDevice::Init()
         sfxCachePlay[i]  = -1;
         sfxCacheSound[i] = -1;
         sfxVoiceCodec[i] = 0; // created PCM (sfxFmt.codec); SubmitSfx retunes to ADPCM per-SFX
-        if (sfxVoiceOk[i])
+        if (sfxVoiceOk[i]) {
+            nxAudioVoiceSetAmplitudeEnvelope(&sfxVoices[i], &fullOpenEnv);
             ++sfxCreated;
+        }
     }
 
     // One streaming (stereo) voice for music/video audio.
@@ -302,6 +324,7 @@ bool32 AudioDevice::Init()
     musicVoiceOk = nxAudioVoiceCreate(&musicVoice, &musFmt) ? true : false;
     musicStarted = false;
     if (musicVoiceOk) {
+        nxAudioVoiceSetAmplitudeEnvelope(&musicVoice, &fullOpenEnv); // snap-open + hold (see SFX note above)
         nxAudioBufferSetCallback(&musicVoice, NXMusicCallback, NULL);
         for (int32 i = 0; i < NX_NUM_BUFFERS; ++i) {
             musicChunks[i] = (int16 *)MmAllocateContiguousMemory(NX_CHUNK_BYTES);
