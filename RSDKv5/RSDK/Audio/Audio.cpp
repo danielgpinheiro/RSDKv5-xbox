@@ -283,11 +283,17 @@ static void UpdateStreamBufferLoosePCM(ChannelInfo *channel)
     const int32 needBytes = srcFrames * 2;       // 8-bit stereo -> 2 bytes / frame
 
     static uint8 src[(MIX_BUFFER_SIZE / 4) * 2];
-    int32 have = 0;
+    int32 have  = 0;
+    int32 wraps = 0; // loop-point rewinds this fill — bounded so a broken/empty
+                     // .pcm that opens but never yields bytes can't spin forever.
+                     // This runs synchronously on the main thread under the audio
+                     // lock (HandleStreamLoad -> LoadStream), so an unbounded stall
+                     // here is a full black-screen freeze on stage entry.
     while (have < needBytes) {
         int32 got = (int32)ReadBytes(&pcmStreamFile, src + have, needBytes - have);
         if (got <= 0) {
-            if (channel->loop) {
+            if (channel->loop && wraps < 2) {
+                ++wraps;
                 uint32 loopByte = (streamLoopPoint / 2) * 2;
                 if (loopByte >= (uint32)pcmDataSize)
                     loopByte = 0;
@@ -296,7 +302,9 @@ static void UpdateStreamBufferLoosePCM(ChannelInfo *channel)
                 continue; // read the remainder from the loop point
             }
 
-            // End of a non-looping track: pad with silence (0x80), idle, close the file.
+            // End of a non-looping track, OR a looping track whose file yields no
+            // bytes even after rewinding (empty/truncated/unreadable .pcm): pad with
+            // silence (0x80), idle, close the file. Never loop unbounded.
             memset(src + have, 0x80, needBytes - have);
             channel->state   = CHANNEL_IDLE;
             channel->soundID = -1;
