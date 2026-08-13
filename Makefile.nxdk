@@ -45,6 +45,7 @@ SRCS += \
 
 INCLUDES += \
 	-I$(RSDKv5_DIR)/ \
+	-I$(CURDIR)/dependencies/xbox/compat/ \
 	-I$(CURDIR)/dependencies/all/ \
 	-I$(CURDIR)/dependencies/all/pl_mpeg/ \
 	-I$(CURDIR)/dependencies/all/tinyxml2/ \

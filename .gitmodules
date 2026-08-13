@@ -6,8 +6,8 @@
 	url = https://github.com/nothings/stb
 [submodule "dependencies/xbox/nxdk"]
 	path = dependencies/xbox/nxdk
-	url = https://github.com/danielgpinheiro/nxdk
-	branch = xbox-fix
+	url = https://github.com/XboxDev/nxdk
+	branch = master
 [submodule "dependencies/xbox/vorbis"]
 	path = dependencies/xbox/vorbis
 	url = https://github.com/danielgpinheiro/vorbis
