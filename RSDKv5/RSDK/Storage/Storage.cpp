@@ -41,24 +41,16 @@ bool32 RSDK::InitStorage()
     // Trade-off at these sizes: heavy scenes/menus may log pool-full (the alloc
     // guards keep the game running — sounds/sprites drop rather than crash).
     dataStorage[DATASET_STG].storageLimit = 14 * 1024 * 1024; // 14MB: Main Menu peaks ~13.7MB (all 5 characters) — must fit or it black-screens
-#ifdef RSDK_USE_NXAUDIO
-    // Music streams as loose 22050/8-bit PCM from D:\MusicPCM\ (tools/oggpcm.sh), so
-    // the whole-OGG streamBuffer (up to ~3.83MB) never lands in this pool — only the
-    // 8KB mix ring + the 512KB Vorbis fallback buffer do. 1MB leaves headroom and
-    // still lets the Vorbis fallback play a small track if a loose .pcm is missing;
-    // frees ~3.5MB. (A missing loose file for a large track degrades to silence, not
-    // a crash — LoadStream idles gracefully on alloc failure.)
-    dataStorage[DATASET_MUS].storageLimit = 1 * 1024 * 1024; //  1MB (was 4.5MB whole-OGG)
-#else
-    dataStorage[DATASET_MUS].storageLimit = 4 * 1024 * 1024 + 512 * 1024; // 4.5MB: largest track (~3.83MB, BlueSpheres.ogg) + 512KB vorbis + mix
-#endif
-#ifdef RSDK_USE_NXAUDIO
+    // Music streams as loose 22050/8-bit PCM from D:\MusicPCM\ (tools/oggpcm.sh) straight
+    // off disc, and the CPU Vorbis decoder (stb_vorbis) is gone from this port entirely —
+    // so neither the whole-OGG streamBuffer (~3.83MB) nor the 512KB Vorbis work buffer
+    // ever land here. All that remains in this pool is the 8KB always-on mix ring; 256KB
+    // is ample and frees ~4.25MB vs the old whole-OGG sizing. (A missing loose .pcm for a
+    // track degrades to silence, never a crash — LoadStream idles gracefully.)
+    dataStorage[DATASET_MUS].storageLimit = 256 * 1024;      // 256KB (was 4.5MB whole-OGG)
     // SFX ship as Xbox ADPCM (loose D:\SoundFXAD\, ~1/4 the S16 size): global set ~1.4MB
     // + a stage's SFX. 3MB leaves margin (incl. any pack-PCM fallback); frees ~4MB.
     dataStorage[DATASET_SFX].storageLimit = 3 * 1024 * 1024; //  3MB (was 7MB S16 PCM)
-#else
-    dataStorage[DATASET_SFX].storageLimit = 7 * 1024 * 1024; //  7MB: 68 global sfx (S16, ~5.9MB); menu VO beyond this drops (guarded, not fatal)
-#endif
     dataStorage[DATASET_STR].storageLimit = 1 * 1024 * 1024;              //  1MB
     dataStorage[DATASET_TMP].storageLimit = 2 * 1024 * 1024 + 512 * 1024; //  2.5MB (scene decompression needs ~2.2MB)
 

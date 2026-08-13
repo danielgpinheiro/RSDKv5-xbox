@@ -437,15 +437,11 @@ enum GameRegions {
 #undef RETRO_RENDERDEVICE_SDL3
 #define RETRO_RENDERDEVICE_SDL3 (1)
 
-// Audio: default to SDL3/AC97, but RSDK_USE_NXAUDIO routes it to the nxdk-audio
-// (MCPX APU) backend instead while render/input stay on SDL3.
-#ifdef RSDK_USE_NXAUDIO
+// Audio is always the nxdk-audio (MCPX APU) backend on Xbox; render and input stay
+// on SDL3. The SDL3/AC97 audio backend and the CPU Vorbis decoder were dropped from
+// this port entirely (see Makefile.nxdk), so nxdk-audio is the only audio path.
 #undef RETRO_AUDIODEVICE_NXAUDIO
 #define RETRO_AUDIODEVICE_NXAUDIO (1)
-#else
-#undef RETRO_AUDIODEVICE_SDL3
-#define RETRO_AUDIODEVICE_SDL3 (1)
-#endif
 
 #undef RETRO_INPUTDEVICE_SDL3
 #define RETRO_INPUTDEVICE_SDL3 (1)
@@ -602,7 +598,11 @@ extern "C" {
 #include <hal/xbox.h>
 #endif
 
+// Xbox plays FMV via pl_mpeg (MPEG-1); the Theora/OGG decoder was dropped from this
+// port, so its header is only pulled in for the other platforms' Video.cpp path.
+#if RETRO_PLATFORM != RETRO_XBOX
 #include <theora/theoradec.h>
+#endif
 
 // ============================
 // ENGINE INCLUDES

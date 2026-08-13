@@ -4,6 +4,8 @@ using namespace RSDK;
 
 FileInfo VideoManager::file;
 
+// Theora/OGG decoder state — other platforms only; Xbox uses pl_mpeg (see below).
+#if RETRO_PLATFORM != RETRO_XBOX
 ogg_sync_state VideoManager::oy;
 ogg_page VideoManager::og;
 ogg_packet VideoManager::op;
@@ -16,6 +18,7 @@ th_setup_info *VideoManager::ts = NULL;
 
 th_pixel_fmt VideoManager::pixelFormat;
 ogg_int64_t VideoManager::granulePos = 0;
+#endif
 bool32 VideoManager::initializing    = false;
 
 #if RETRO_PLATFORM == RETRO_XBOX

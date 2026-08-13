@@ -88,24 +88,22 @@ else
   LTO := y
 endif
 
-# Audio backend: nxdk-audio (MCPX APU hardware, default) vs SDL3/AC97 (AUDIO=sdl3).
-AUDIO ?= nxdk
-ifeq ($(AUDIO),nxdk)
-  RSDK_FLAGS += -DRSDK_USE_NXAUDIO
-  INCLUDES   += -I$(CURDIR)/dependencies/xbox/nxdk-audio/include
-  SRCS += \
-    $(CURDIR)/dependencies/xbox/nxdk-audio/audio_core.c \
-    $(CURDIR)/dependencies/xbox/nxdk-audio/audio_voice.c \
-    $(CURDIR)/dependencies/xbox/nxdk-audio/audio_buffer.c
-endif
+# Audio backend: nxdk-audio (MCPX APU hardware) is the ONLY audio path on this port.
+# The SDL3/AC97 audio backend and the CPU Vorbis decoder (stb_vorbis) were dropped;
+# music streams as loose PCM from disc and SFX are Xbox ADPCM, both mixed by the APU.
+RSDK_FLAGS += -DRSDK_USE_NXAUDIO
+INCLUDES   += -I$(CURDIR)/dependencies/xbox/nxdk-audio/include
+SRCS += \
+  $(CURDIR)/dependencies/xbox/nxdk-audio/audio_core.c \
+  $(CURDIR)/dependencies/xbox/nxdk-audio/audio_voice.c \
+  $(CURDIR)/dependencies/xbox/nxdk-audio/audio_buffer.c
 
 CFLAGS	+= $(EXTRA_OFLAGS) -Wall $(INCLUDES) $(RSDK_FLAGS)
 
 CXXFLAGS += $(CFLAGS) -Wpedantic
 
-include $(CURDIR)/dependencies/xbox/Makefile-vorbis.nxdk
-include $(CURDIR)/dependencies/xbox/Makefile-ogg.nxdk
-include $(CURDIR)/dependencies/xbox/Makefile-theora.nxdk
+# (libvorbis / libogg / libtheora were removed from this port — FMV now decodes via
+# pl_mpeg and music streams as loose PCM, so no OGG/Vorbis/Theora codecs are linked.)
 
 include $(NXDK_DIR)/Makefile
 

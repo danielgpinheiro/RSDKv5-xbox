@@ -6,6 +6,10 @@ using namespace RSDK;
 #include "Legacy/AudioLegacy.cpp"
 #endif
 
+// Xbox streams music as loose pre-converted PCM from disc (see LoadStreamLoosePCM
+// below), so the CPU Vorbis decoder is compiled out entirely on this platform — no
+// stb_vorbis, no OGG-in-pack fallback. Every other platform keeps the Vorbis path.
+#if !defined(__XBOX__)
 #define STB_VORBIS_NO_PUSHDATA_API
 #define STB_VORBIS_NO_STDIO
 #define STB_VORBIS_NO_INTEGER_CONVERSION
@@ -13,6 +17,7 @@ using namespace RSDK;
 
 stb_vorbis *vorbisInfo = NULL;
 stb_vorbis_alloc vorbisAlloc;
+#endif
 
 SFXInfo RSDK::sfxList[SFX_COUNT];
 ChannelInfo RSDK::channels[CHANNEL_COUNT];
@@ -58,7 +63,7 @@ uint8 AudioDeviceBase::audioFocus               = 0;
 void AudioDeviceBase::Release()
 {
     // This is missing, meaning that the garbage collector will never reclaim stb_vorbis's buffer.
-#if !RETRO_USE_ORIGINAL_CODE
+#if !RETRO_USE_ORIGINAL_CODE && !defined(__XBOX__)
     stb_vorbis_close(vorbisInfo);
     vorbisInfo = NULL;
 #endif
@@ -205,19 +210,13 @@ void AudioDeviceBase::InitAudioChannels()
     sfxList[SFX_COUNT - 1].length             = MIX_BUFFER_SIZE;
     AllocateStorage((void **)&sfxList[SFX_COUNT - 1].buffer, MIX_BUFFER_SIZE * sizeof(SAMPLE_FORMAT), DATASET_MUS, false);
 
-#if RETRO_PLATFORM == RETRO_XBOX
-    // Allocate the vorbis work buffer once at boot so the MUS pool layout is
-    // permanently [mix][vorbis][track]: track changes free/alloc only the LAST
-    // block, so compaction reclaims it without moving the live streamBuffer that
-    // stb_vorbis and the audio thread hold pointers into.
-    vorbisAlloc.alloc_buffer_length_in_bytes = 512 * 1024;
-    AllocateStorage((void **)&vorbisAlloc.alloc_buffer, 512 * 1024, DATASET_MUS, false);
-#endif
+    // (Xbox once pre-allocated a 512KB stb_vorbis work buffer here; music now streams
+    // as loose PCM straight from disc, so the Vorbis decoder is gone and so is its pool.)
 
     initializedAudioChannels = true;
 }
 
-#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+#if RETRO_PLATFORM == RETRO_XBOX
 // --- Loose pre-converted PCM music streaming (drops CPU Vorbis) -----------------
 // Music is shipped as headerless raw 22050 Hz / 8-bit unsigned / stereo interleaved
 // PCM at D:\MusicPCM\<name>.pcm (converted offline by tools/oggpcm.sh — the Dreamcast
@@ -334,13 +333,13 @@ static void UpdateStreamBufferLoosePCM(ChannelInfo *channel)
 
 void RSDK::UpdateStreamBuffer(ChannelInfo *channel)
 {
-#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
-    if (streamIsLoosePCM) {
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Xbox: music is loose-PCM only (stb_vorbis compiled out). A missing loose file
+    // means the stream was never opened -> nothing to fill (silence, never a crash).
+    if (streamIsLoosePCM)
         UpdateStreamBufferLoosePCM(channel);
-        return;
-    }
-#endif
-
+    return;
+#else
     int32 bufferRemaining = MIX_BUFFER_SIZE;
     float *buffer         = channel->samplePtr;
 
@@ -365,6 +364,7 @@ void RSDK::UpdateStreamBuffer(ChannelInfo *channel)
     }
 
     for (int32 i = 0; i < MIX_BUFFER_SIZE; ++i) channel->samplePtr[i] *= 0.5f;
+#endif
 }
 
 void RSDK::LoadStream(ChannelInfo *channel)
@@ -372,6 +372,19 @@ void RSDK::LoadStream(ChannelInfo *channel)
     if (channel->state != CHANNEL_LOADING_STREAM)
         return;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Xbox: loose pre-converted PCM is the ONLY music path (stb_vorbis compiled out).
+    // A missing loose .pcm for this track degrades to silence — never a crash.
+    if (streamIsLoosePCM) {
+        CloseFile(&pcmStreamFile);
+        streamIsLoosePCM = false;
+    }
+    if (LoadStreamLoosePCM(channel))
+        return;
+
+    channel->state = CHANNEL_IDLE;
+    return;
+#else
     stb_vorbis_close(vorbisInfo);
 
     // Free the previous track's buffer to avoid leaking MUS pool memory.
@@ -383,17 +396,6 @@ void RSDK::LoadStream(ChannelInfo *channel)
         RemoveStorageEntry((void **)&streamBuffer);
         streamBuffer = NULL;
     }
-
-#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
-    // Prefer the loose pre-converted PCM (no Vorbis decode, streamed from disc);
-    // fall back to the packed OGG below when the loose file is absent.
-    if (streamIsLoosePCM) {
-        CloseFile(&pcmStreamFile);
-        streamIsLoosePCM = false;
-    }
-    if (LoadStreamLoosePCM(channel))
-        return;
-#endif
 
     FileInfo info;
     InitFileInfo(&info);
@@ -429,6 +431,7 @@ void RSDK::LoadStream(ChannelInfo *channel)
 
     if (channel->state == CHANNEL_LOADING_STREAM)
         channel->state = CHANNEL_IDLE;
+#endif
 }
 
 int32 RSDK::PlayStream(const char *filename, uint32 slot, uint32 startPos, uint32 loopPoint, bool32 loadASync)
@@ -867,15 +870,17 @@ uint32 RSDK::GetChannelPos(uint32 channel)
 #endif
 
     if (channels[channel].state == CHANNEL_STREAM) {
-#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
-        // Loose-PCM streams have no vorbisInfo — report the tracked playback position.
+#if RETRO_PLATFORM == RETRO_XBOX
+        // Xbox: loose-PCM streams only (stb_vorbis compiled out) — report the tracked pos.
         if (streamIsLoosePCM)
             return pcmPlayPos44k;
-#endif
+        return 0;
+#else
         if (!vorbisInfo->current_loc_valid || vorbisInfo->current_loc < 0)
             return 0;
 
         return vorbisInfo->current_loc;
+#endif
     }
 
     return 0;
@@ -883,17 +888,19 @@ uint32 RSDK::GetChannelPos(uint32 channel)
 
 double RSDK::GetVideoStreamPos()
 {
-#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
-    // A loose-PCM music stream has no vorbisInfo; avoid the NULL deref below.
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Xbox: loose-PCM music only (no vorbisInfo) — report the tracked playback position.
     if (channels[0].state == CHANNEL_STREAM && streamIsLoosePCM && AudioDevice::audioState && AudioDevice::initializedAudioChannels)
         return pcmPlayPos44k / (double)AUDIO_FREQUENCY;
-#endif
+    return -1.0;
+#else
     if (channels[0].state == CHANNEL_STREAM && AudioDevice::audioState && AudioDevice::initializedAudioChannels && vorbisInfo
         && vorbisInfo->current_loc_valid) {
         return vorbisInfo->current_loc / (double)AUDIO_FREQUENCY;
     }
 
     return -1.0;
+#endif
 }
 
 void RSDK::ClearStageSfx()

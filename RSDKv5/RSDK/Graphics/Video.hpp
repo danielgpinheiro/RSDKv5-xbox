@@ -7,6 +7,9 @@ namespace RSDK
 struct VideoManager {
     static FileInfo file;
 
+    // Xbox decodes FMV with pl_mpeg (MPEG-1) and has no Theora/OGG headers; those
+    // members exist only for the other platforms' Theora path in Video.cpp.
+#if RETRO_PLATFORM != RETRO_XBOX
     static ogg_sync_state oy;
     static ogg_page og;
     static ogg_stream_state vo;
@@ -19,6 +22,7 @@ struct VideoManager {
 
     static th_pixel_fmt pixelFormat;
     static ogg_int64_t granulePos;
+#endif
     static bool32 initializing;
 };
 
