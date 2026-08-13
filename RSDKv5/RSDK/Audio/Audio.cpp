@@ -217,8 +217,130 @@ void AudioDeviceBase::InitAudioChannels()
     initializedAudioChannels = true;
 }
 
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+// --- Loose pre-converted PCM music streaming (drops CPU Vorbis) -----------------
+// Music is shipped as headerless raw 22050 Hz / 8-bit unsigned / stereo interleaved
+// PCM at D:\MusicPCM\<name>.pcm (converted offline by tools/oggpcm.sh — the Dreamcast
+// approach). We stream it straight from disc — no whole-file load into DATASET_MUS,
+// no 512KB stb_vorbis work buffer — and 2x-upsample into the 44100 Hz float ring the
+// APU music voice already consumes. Audible only in xemu (hardware audio is silent),
+// but the CPU (no Vorbis decode) and MUS-pool savings are real on hardware. Falls
+// back to the packed OGG + Vorbis path when the loose file is absent.
+static bool32 streamIsLoosePCM = false;
+static FileInfo pcmStreamFile;
+static int32 pcmDataSize    = 0; // total PCM bytes in the loose file
+static uint32 pcmPlayPos44k = 0; // playback position in 44100 Hz stereo frames
+
+static bool32 LoadStreamLoosePCM(ChannelInfo *channel)
+{
+    // streamFilePath is "Data/Music/<name>.<ext>" -> "D:\MusicPCM\<name>.pcm".
+    const char *name = streamFilePath;
+    for (const char *p = streamFilePath; *p; ++p)
+        if (*p == '/' || *p == '\\')
+            name = p + 1;
+
+    char base[0x40];
+    int32 i = 0;
+    for (; name[i] && i < (int32)sizeof(base) - 1; ++i) base[i] = name[i];
+    base[i] = '\0';
+    for (int32 j = i - 1; j >= 0; --j) {
+        if (base[j] == '.') {
+            base[j] = '\0';
+            break;
+        }
+    }
+
+    char loosePath[0x80];
+    sprintf_s(loosePath, sizeof(loosePath), "D:\\MusicPCM\\%s.pcm", base);
+
+    InitFileInfo(&pcmStreamFile);
+    pcmStreamFile.externalFile = true; // plain fOpen of D:\MusicPCM\...; never the data pack
+    if (!LoadFile(&pcmStreamFile, loosePath, FMODE_RB))
+        return false;
+
+    pcmDataSize      = pcmStreamFile.fileSize;
+    streamIsLoosePCM = true;
+
+    // streamStartPos / streamLoopPoint are 44100 Hz per-channel sample indices (the
+    // stb_vorbis units). The PCM is 22050 Hz 8-bit stereo = 2 bytes per stereo frame,
+    // so 44100 sample index N -> 22050 frame N/2 -> byte offset (N/2)*2 (which equals
+    // the 44100-frame index, the unit pcmPlayPos44k tracks).
+    uint32 startByte = (streamStartPos / 2) * 2;
+    if (startByte > (uint32)pcmDataSize)
+        startByte = 0;
+    Seek_Set(&pcmStreamFile, (int32)startByte);
+    pcmPlayPos44k = startByte;
+
+    channel->state = CHANNEL_STREAM;
+    UpdateStreamBuffer(channel); // dispatches to the loose variant below (streamIsLoosePCM)
+    return true;
+}
+
+static void UpdateStreamBufferLoosePCM(ChannelInfo *channel)
+{
+    float *out            = channel->samplePtr;
+    const int32 outFrames = MIX_BUFFER_SIZE / 2; // 44100 Hz stereo frames to produce
+    const int32 srcFrames = outFrames / 2;       // 22050 Hz source frames (2x upsample)
+    const int32 needBytes = srcFrames * 2;       // 8-bit stereo -> 2 bytes / frame
+
+    static uint8 src[(MIX_BUFFER_SIZE / 4) * 2];
+    int32 have = 0;
+    while (have < needBytes) {
+        int32 got = (int32)ReadBytes(&pcmStreamFile, src + have, needBytes - have);
+        if (got <= 0) {
+            if (channel->loop) {
+                uint32 loopByte = (streamLoopPoint / 2) * 2;
+                if (loopByte >= (uint32)pcmDataSize)
+                    loopByte = 0;
+                Seek_Set(&pcmStreamFile, (int32)loopByte);
+                pcmPlayPos44k = loopByte;
+                continue; // read the remainder from the loop point
+            }
+
+            // End of a non-looping track: pad with silence (0x80), idle, close the file.
+            memset(src + have, 0x80, needBytes - have);
+            channel->state   = CHANNEL_IDLE;
+            channel->soundID = -1;
+            CloseFile(&pcmStreamFile);
+            streamIsLoosePCM = false;
+            have             = needBytes;
+            break;
+        }
+        have += got;
+    }
+
+    // u8 [0,255] (128 = silence) -> float, halved to match the Vorbis path's 0.5
+    // attenuation, then linearly upsampled 22050 -> 44100 (one interpolated frame
+    // between each source pair; the final source frame is held).
+    const float scale = 0.5f / 128.0f;
+    for (int32 n = 0; n < srcFrames; ++n) {
+        float l0 = ((float)src[n * 2 + 0] - 128.0f) * scale;
+        float r0 = ((float)src[n * 2 + 1] - 128.0f) * scale;
+        float l1 = l0, r1 = r0;
+        if (n + 1 < srcFrames) {
+            l1 = ((float)src[(n + 1) * 2 + 0] - 128.0f) * scale;
+            r1 = ((float)src[(n + 1) * 2 + 1] - 128.0f) * scale;
+        }
+        int32 o    = n * 4;
+        out[o + 0] = l0;
+        out[o + 1] = r0;
+        out[o + 2] = (l0 + l1) * 0.5f;
+        out[o + 3] = (r0 + r1) * 0.5f;
+    }
+
+    pcmPlayPos44k += (uint32)outFrames;
+}
+#endif
+
 void RSDK::UpdateStreamBuffer(ChannelInfo *channel)
 {
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+    if (streamIsLoosePCM) {
+        UpdateStreamBufferLoosePCM(channel);
+        return;
+    }
+#endif
+
     int32 bufferRemaining = MIX_BUFFER_SIZE;
     float *buffer         = channel->samplePtr;
 
@@ -261,6 +383,17 @@ void RSDK::LoadStream(ChannelInfo *channel)
         RemoveStorageEntry((void **)&streamBuffer);
         streamBuffer = NULL;
     }
+
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+    // Prefer the loose pre-converted PCM (no Vorbis decode, streamed from disc);
+    // fall back to the packed OGG below when the loose file is absent.
+    if (streamIsLoosePCM) {
+        CloseFile(&pcmStreamFile);
+        streamIsLoosePCM = false;
+    }
+    if (LoadStreamLoosePCM(channel))
+        return;
+#endif
 
     FileInfo info;
     InitFileInfo(&info);
@@ -734,6 +867,11 @@ uint32 RSDK::GetChannelPos(uint32 channel)
 #endif
 
     if (channels[channel].state == CHANNEL_STREAM) {
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+        // Loose-PCM streams have no vorbisInfo — report the tracked playback position.
+        if (streamIsLoosePCM)
+            return pcmPlayPos44k;
+#endif
         if (!vorbisInfo->current_loc_valid || vorbisInfo->current_loc < 0)
             return 0;
 
@@ -745,7 +883,13 @@ uint32 RSDK::GetChannelPos(uint32 channel)
 
 double RSDK::GetVideoStreamPos()
 {
-    if (channels[0].state == CHANNEL_STREAM && AudioDevice::audioState && AudioDevice::initializedAudioChannels && vorbisInfo->current_loc_valid) {
+#if RETRO_PLATFORM == RETRO_XBOX && defined(RSDK_USE_NXAUDIO)
+    // A loose-PCM music stream has no vorbisInfo; avoid the NULL deref below.
+    if (channels[0].state == CHANNEL_STREAM && streamIsLoosePCM && AudioDevice::audioState && AudioDevice::initializedAudioChannels)
+        return pcmPlayPos44k / (double)AUDIO_FREQUENCY;
+#endif
+    if (channels[0].state == CHANNEL_STREAM && AudioDevice::audioState && AudioDevice::initializedAudioChannels && vorbisInfo
+        && vorbisInfo->current_loc_valid) {
         return vorbisInfo->current_loc / (double)AUDIO_FREQUENCY;
     }
 

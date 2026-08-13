@@ -280,3 +280,5 @@ clean-xbox.sh
 
 # Generated loose Xbox-ADPCM SFX (rebuild with tools/xbadpcm.py from an extracted Data.rsdk)
 SoundFXAD/
+# Generated loose PCM music (rebuild with tools/oggpcm.sh from an extracted Data.rsdk)
+MusicPCM/
