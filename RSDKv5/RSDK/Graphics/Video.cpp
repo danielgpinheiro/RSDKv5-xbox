@@ -18,6 +18,36 @@ th_pixel_fmt VideoManager::pixelFormat;
 ogg_int64_t VideoManager::granulePos = 0;
 bool32 VideoManager::initializing    = false;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+#define PLM_NO_STDIO // match pl_mpeg.c: no fopen/FILE prototypes (nxdk has no usable stdio files)
+#include "pl_mpeg/pl_mpeg.h"
+
+// Xbox FMV path: MPEG-1 via pl_mpeg, streamed from a loose D:\Videos\<name>.mpg,
+// replacing the Theora path. XMV was ruled out (ffmpeg can't mux it, nxdk has no
+// WMV decoder); MPEG-1 is ffmpeg-encodable, its Y/Cr/Cb output feeds the existing
+// YUV420 GPU upload untouched, and its small decode footprint fits the 64MB budget
+// where the 1024x512 Theora decoder OOMed. Video-only — pl_mpeg audio is disabled
+// (the FMV files carry no audio the engine uses; cf. the Theora path below which
+// also ignores the audio stream). State is file-static so the shared VideoManager
+// header — and every other platform — is untouched.
+static plm_t *plmVideo        = NULL;
+static plm_frame_t *plmFrame  = NULL;
+static bool32 plmInitializing = false;
+
+// pl_mpeg pulls more compressed data through this when its ring buffer runs low;
+// feed it from the already-open RSDK FileInfo so the whole .mpg never sits in RAM.
+static void VideoLoadCallback(plm_buffer_t *buffer, void *user)
+{
+    (void)user;
+    uint8 chunk[0x1000];
+    int32 got = (int32)ReadBytes(&VideoManager::file, chunk, sizeof(chunk));
+    if (got > 0)
+        plm_buffer_write(buffer, chunk, (size_t)got);
+    else
+        plm_buffer_signal_end(buffer);
+}
+#endif
+
 bool32 RSDK::LoadVideo(const char *filename, double startDelay, bool32 (*skipCallback)())
 {
     if (ENGINE_VERSION == 5 && sceneInfo.state == ENGINESTATE_VIDEOPLAYBACK)
@@ -27,21 +57,90 @@ bool32 RSDK::LoadVideo(const char *filename, double startDelay, bool32 (*skipCal
         return false;
 #endif
 
-    char fullFilePath[0x80];
 #if RETRO_PLATFORM == RETRO_XBOX
-    // Xbox plays re-encoded videos shipped loose in D:\Videos\ only. The packed
-    // originals are 1024x512 and the Theora decoder can't fit alongside the 64MB
-    // storage pools; if the loose file is absent, skip the FMV rather than OOM.
-    // Use an absolute D:\ path — nxdk has no CWD, so relative paths don't resolve.
-    sprintf_s(fullFilePath, sizeof(fullFilePath), "D:\\Videos\\%s", filename);
-#else
-    sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Video/%s", filename);
-#endif
+    // Map the requested name (e.g. "Mania.ogv") to the loose MPEG-1 re-encode
+    // "D:\Videos\Mania.mpg". Absolute D:\ path — nxdk has no CWD. If the loose
+    // file is absent, skip the FMV rather than fail loudly (matches prior behaviour).
+    char base[0x40];
+    int32 b = 0;
+    for (; filename[b] && b < (int32)sizeof(base) - 1; ++b) base[b] = filename[b];
+    base[b] = '\0';
+    for (int32 i = b - 1; i >= 0; --i) {
+        if (base[i] == '.') {
+            base[i] = '\0';
+            break;
+        }
+    }
+
+    char fullFilePath[0x80];
+    sprintf_s(fullFilePath, sizeof(fullFilePath), "D:\\Videos\\%s.mpg", base);
 
     InitFileInfo(&VideoManager::file);
-#if RETRO_PLATFORM == RETRO_XBOX
-    VideoManager::file.externalFile = true; // force a plain fOpen of D:\Videos\...; never the data pack
+    VideoManager::file.externalFile = true; // plain fOpen of D:\Videos\...; never the data pack
+    if (!LoadFile(&VideoManager::file, fullFilePath, FMODE_RB))
+        return false;
+
+    plm_buffer_t *buffer = plm_buffer_create_with_capacity(PLM_BUFFER_DEFAULT_SIZE);
+    if (!buffer) {
+        CloseFile(&VideoManager::file);
+        return false;
+    }
+    plm_buffer_set_load_callback(buffer, VideoLoadCallback, NULL);
+
+    plmVideo = plm_create_with_buffer(buffer, TRUE); // destroy the buffer with the decoder
+    if (!plmVideo || !plm_has_headers(plmVideo)) {
+        if (plmVideo) {
+            plm_destroy(plmVideo);
+            plmVideo = NULL;
+        }
+        else {
+            plm_buffer_destroy(buffer);
+        }
+        CloseFile(&VideoManager::file);
+        return false;
+    }
+
+    plm_set_audio_enabled(plmVideo, FALSE);
+    plm_set_video_enabled(plmVideo, TRUE);
+    plm_set_loop(plmVideo, FALSE);
+
+    engine.storedShaderID     = videoSettings.shaderID;
+    videoSettings.screenCount = 0;
+
+    if (ENGINE_VERSION == 5)
+        engine.storedState = sceneInfo.state;
+#if RETRO_REV0U
+    else if (ENGINE_VERSION == 3)
+        engine.storedState = RSDK::Legacy::gameMode;
 #endif
+
+    engine.displayTime     = 0.0;
+    engine.videoStartDelay = 0.0;
+    if (AudioDevice::audioState == 1)
+        engine.videoStartDelay = startDelay;
+
+    videoSettings.shaderID = SHADER_YUV_420; // MPEG-1 is always 4:2:0
+    plmInitializing        = true;
+    plmFrame               = NULL;
+
+    engine.skipCallback = NULL;
+    ProcessVideo();
+    engine.skipCallback = skipCallback;
+
+    changedVideoSettings = false;
+    if (ENGINE_VERSION == 5)
+        sceneInfo.state = ENGINESTATE_VIDEOPLAYBACK;
+#if RETRO_REV0U
+    else if (ENGINE_VERSION == 3)
+        RSDK::Legacy::gameMode = RSDK::Legacy::v3::ENGINE_VIDEOWAIT;
+#endif
+
+    return true;
+#else
+    char fullFilePath[0x80];
+    sprintf_s(fullFilePath, sizeof(fullFilePath), "Data/Video/%s", filename);
+
+    InitFileInfo(&VideoManager::file);
     if (LoadFile(&VideoManager::file, fullFilePath, FMODE_RB)) {
         // Init
         ogg_sync_init(&VideoManager::oy);
@@ -149,13 +248,6 @@ bool32 RSDK::LoadVideo(const char *filename, double startDelay, bool32 (*skipCal
             else {
                 VideoManager::td          = th_decode_alloc(&VideoManager::ti, VideoManager::ts);
                 VideoManager::pixelFormat = VideoManager::ti.pixel_fmt;
-#if RETRO_PLATFORM == RETRO_XBOX
-                // The decoder needs ~5MB of free heap for a 1024x512 video — if this
-                // fails, the memory budget regressed (see Storage.cpp pool sizes)
-                if (!VideoManager::td)
-                    PrintLog(PRINT_NORMAL, "ERROR: th_decode_alloc failed (%dx%d) — out of memory?", VideoManager::ti.frame_width,
-                             VideoManager::ti.frame_height);
-#endif
 
                 int32 ppLevelMax = 0;
                 th_decode_ctl(VideoManager::td, TH_DECCTL_GET_PPLEVEL_MAX, &ppLevelMax, sizeof(int32));
@@ -209,10 +301,66 @@ bool32 RSDK::LoadVideo(const char *filename, double startDelay, bool32 (*skipCal
     }
 
     return false;
+#endif
 }
 
 void RSDK::ProcessVideo()
 {
+#if RETRO_PLATFORM == RETRO_XBOX
+    if (!plmVideo)
+        return;
+
+    bool32 finished = false;
+    double curTime  = plmFrame ? (double)plmFrame->time : 0.0;
+
+    if (!plmInitializing) {
+        double streamPos = GetVideoStreamPos();
+
+        if (streamPos <= -1.0)
+            engine.displayTime += (1.0 / 60.0); // deltaTime frame-step (FMV audio is disabled)
+        else
+            engine.displayTime = streamPos;
+
+#if RETRO_USE_MOD_LOADER
+        RunModCallbacks(MODCB_ONVIDEOSKIPCB, (void *)engine.skipCallback);
+#endif
+        if (engine.skipCallback && engine.skipCallback())
+            finished = true;
+    }
+
+    if (!finished && (plmInitializing || engine.displayTime >= engine.videoStartDelay + curTime)) {
+        plm_frame_t *frame = plm_decode_video(plmVideo);
+        if (!frame) {
+            finished = true; // source ended (or corrupt) — tear down below
+        }
+        else {
+            plmFrame = frame;
+            // MPEG-1 is 4:2:0. plm plane widths are the (macroblock-padded) strides;
+            // frame->width/height are the display crop the upload honours. cb=U, cr=V.
+            RenderDevice::SetupVideoTexture_YUV420((int32)frame->width, (int32)frame->height, frame->y.data, frame->cb.data, frame->cr.data,
+                                                   (int32)frame->y.width, (int32)frame->cb.width, (int32)frame->cr.width);
+        }
+
+        plmInitializing = false;
+    }
+
+    if (finished) {
+        CloseFile(&VideoManager::file);
+
+        plm_destroy(plmVideo); // also destroys the buffer (destroy_when_done)
+        plmVideo = NULL;
+        plmFrame = NULL;
+
+        videoSettings.shaderID    = engine.storedShaderID;
+        videoSettings.screenCount = 1;
+        if (ENGINE_VERSION == 5)
+            sceneInfo.state = engine.storedState;
+#if RETRO_REV0U
+        else if (ENGINE_VERSION == 3)
+            RSDK::Legacy::gameMode = engine.storedState;
+#endif
+    }
+#else
     bool32 finished = false;
     double curTime  = 0;
     if (!VideoManager::initializing) {
@@ -253,15 +401,8 @@ void RSDK::ProcessVideo()
 
             int32 dataPos = (VideoManager::ti.pic_x & 0xFFFFFFFE) + (VideoManager::ti.pic_y & 0xFFFFFFFE) * yuv[0].stride;
 
-#if RETRO_PLATFORM == RETRO_XBOX
-            // Theora frames are padded up to e.g. 1024x512; only convert/upload the visible
-            // picture region — RAM is too tight for a full-frame ARGB texture
-            int32 vidWidth  = (int32)VideoManager::ti.pic_width;
-            int32 vidHeight = (int32)VideoManager::ti.pic_height;
-#else
             int32 vidWidth  = yuv[0].width;
             int32 vidHeight = yuv[0].height;
-#endif
 
             switch (VideoManager::pixelFormat) {
                 default: break;
@@ -312,4 +453,5 @@ void RSDK::ProcessVideo()
             RSDK::Legacy::gameMode = engine.storedState;
 #endif
     }
+#endif
 }

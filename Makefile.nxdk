@@ -11,6 +11,7 @@ SRCS += \
 	$(CURDIR)/dependencies/all/iniparser/iniparser.cpp \
 	$(CURDIR)/dependencies/all/iniparser/dictionary.cpp \
 	$(CURDIR)/dependencies/all/miniz/miniz.c \
+	$(CURDIR)/dependencies/all/pl_mpeg/pl_mpeg.c \
 	$(RSDKv5_DIR)/main.cpp \
 	$(RSDKv5_DIR)/RSDK/Core/RetroEngine.cpp \
 	$(RSDKv5_DIR)/RSDK/Core/Math.cpp \
@@ -45,6 +46,7 @@ SRCS += \
 INCLUDES += \
 	-I$(RSDKv5_DIR)/ \
 	-I$(CURDIR)/dependencies/all/ \
+	-I$(CURDIR)/dependencies/all/pl_mpeg/ \
 	-I$(CURDIR)/dependencies/all/tinyxml2/ \
 	-I$(CURDIR)/dependencies/all/iniparser/ \
 	-I$(CURDIR)/dependencies/xbox/stb/ \
@@ -131,7 +133,7 @@ CXXFLAGS += $(SDL3_FLAGS)
 main.exe: libSDL3.lib
 
 # Bundle Data.rsdk in the ISO
-$(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini stage_videos stage_soundfxad
+$(OUTPUT_DIR)/default.xbe: $(OUTPUT_DIR)/Data.rsdk $(OUTPUT_DIR)/Settings.ini stage_videos stage_soundfxad stage_musicpcm
 
 $(OUTPUT_DIR)/Data.rsdk: $(CURDIR)/Data.rsdk | $(OUTPUT_DIR)
 	cp "$<" "$@"
@@ -142,12 +144,15 @@ $(OUTPUT_DIR)/Settings.ini: $(CURDIR)/xbox/Settings.ini | $(OUTPUT_DIR)
 # Optionally bundle re-encoded intro/cutscene videos as loose files at D:\Videos\.
 # The engine plays them from there and skips the FMV if the folder is absent, so
 # this staging is conditional and a build without Videos/ still succeeds.
+# Only *.mpg are shipped: the Xbox FMV path decodes MPEG-1 via pl_mpeg (make them
+# with tools/mkmpg.sh). Any leftover source .ogv in Videos/ are kept local and NOT
+# staged, so they don't bloat the ISO with a format the engine no longer reads.
 .PHONY: stage_videos
 stage_videos: | $(OUTPUT_DIR)
-	@if [ -d "$(CURDIR)/Videos" ]; then \
-	  echo "[ VIDEOS   ] staging Videos/ -> ISO"; \
+	@if ls "$(CURDIR)"/Videos/*.mpg >/dev/null 2>&1; then \
+	  echo "[ VIDEOS   ] staging Videos/*.mpg -> ISO"; \
 	  mkdir -p "$(OUTPUT_DIR)/Videos"; \
-	  cp -R "$(CURDIR)/Videos/." "$(OUTPUT_DIR)/Videos/"; \
+	  cp "$(CURDIR)"/Videos/*.mpg "$(OUTPUT_DIR)/Videos/"; \
 	fi
 
 # Bundle loose Xbox-ADPCM SFX at D:\SoundFXAD\ (converted offline by tools/xbadpcm.py).
@@ -159,6 +164,20 @@ stage_soundfxad: | $(OUTPUT_DIR)
 	  echo "[ SFXADPCM ] staging SoundFXAD/ -> ISO"; \
 	  mkdir -p "$(OUTPUT_DIR)/SoundFXAD"; \
 	  cp -R "$(CURDIR)/SoundFXAD/." "$(OUTPUT_DIR)/SoundFXAD/"; \
+	fi
+
+# Bundle loose pre-converted PCM music at D:\MusicPCM\ (converted offline by
+# tools/oggpcm.sh: 22050 Hz / 8-bit / stereo raw). The nxaudio backend streams these
+# straight from disc instead of CPU-decoding OGG; absent folder -> the engine falls
+# back to the packed OGG + Vorbis, so this staging is conditional. NOTE: like
+# SoundFXAD/, this is expected present for the NXAUDIO build — the shrunken DATASET_MUS
+# assumes streamed PCM, so a missing large track degrades to silence (never a crash).
+.PHONY: stage_musicpcm
+stage_musicpcm: | $(OUTPUT_DIR)
+	@if [ -d "$(CURDIR)/MusicPCM" ]; then \
+	  echo "[ MUSICPCM ] staging MusicPCM/ -> ISO"; \
+	  mkdir -p "$(OUTPUT_DIR)/MusicPCM"; \
+	  cp -R "$(CURDIR)/MusicPCM/." "$(OUTPUT_DIR)/MusicPCM/"; \
 	fi
 
 clean_local:
