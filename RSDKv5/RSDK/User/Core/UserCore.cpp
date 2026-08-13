@@ -703,8 +703,21 @@ void RSDK::SaveSettingsINI(bool32 writeToFile)
         // ================
         WriteText(file, "\n[Audio]\n");
         WriteText(file, "streamsEnabled=%s\n", (engine.streamsEnabled ? "y" : "n"));
+#if RETRO_PLATFORM == RETRO_XBOX
+        // This Xbox toolchain's vsprintf "%f" is broken (the same reason main.cpp ships a
+        // custom atof) — it wrote the volumes as 0.000000, which reloaded as 0 (SILENT) on
+        // the next boot, so audio reverted to muted every launch until re-set in Options.
+        // Emit fixed-point decimals via integer formatting; the custom atof round-trips them.
+        int32 svMilli = (int32)(engine.streamVolume * 1000.0f + 0.5f);
+        int32 fxMilli = (int32)(engine.soundFXVolume * 1000.0f + 0.5f);
+        svMilli       = svMilli < 0 ? 0 : (svMilli > 1000 ? 1000 : svMilli);
+        fxMilli       = fxMilli < 0 ? 0 : (fxMilli > 1000 ? 1000 : fxMilli);
+        WriteText(file, "streamVolume=%d.%03d\n", svMilli / 1000, svMilli % 1000);
+        WriteText(file, "sfxVolume=%d.%03d\n", fxMilli / 1000, fxMilli % 1000);
+#else
         WriteText(file, "streamVolume=%f\n", engine.streamVolume);
         WriteText(file, "sfxVolume=%f\n", engine.soundFXVolume);
+#endif
 
         // ==========================
         // OPTIONS (decomp only)
