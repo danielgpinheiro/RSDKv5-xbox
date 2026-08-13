@@ -922,6 +922,15 @@ bool RenderDevice::InitGraphicsAPI()
 {
     videoSettings.shaderSupport = false;
 
+#if RETRO_PLATFORM == RETRO_XBOX
+    // Force a true 4:3 internal resolution: 320x240 is exactly 4:3, so the letterbox
+    // present maps it onto the 640x480 (4:3) output at a clean 2x with NO bars. The
+    // stock 424x240 is ~16:9 and letterboxes into 640x362 with big top/bottom bars on
+    // a 4:3 TV. Pinned here (not just in Settings.ini) so a stale saved settings copy
+    // on E:\UDATA can't reintroduce the widescreen width. Also cheaper (narrower fill).
+    videoSettings.pixWidth = 320;
+#endif
+
     viewSize.x = videoSettings.windowWidth;
     viewSize.y = videoSettings.windowHeight;
 
