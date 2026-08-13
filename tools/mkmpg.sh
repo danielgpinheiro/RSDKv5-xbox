@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # mkmpg.sh — re-encode FMV cutscenes to MPEG-1 for the Xbox pl_mpeg player.
 #
+# CREDIT: the MPEG-1 + pl_mpeg FMV approach is based on the Dreamcast port of
+# RSDKv5 / Sonic Mania — its offline video pipeline (dreamcast/video_script.sh) and
+# the pl_mpeg decoder it plays back with (RSDK/Graphics/KallistiOS/mpeg.c). This
+# script is the Xbox-side equivalent, producing MPEG Program Streams for our
+# pl_mpeg-based player.
+#
 # The Xbox FMV path (RSDK/Graphics/Video.cpp) decodes MPEG-1 via pl_mpeg, replacing
 # Theora. pl_mpeg's high-level demuxer expects an MPEG **Program Stream** (container
 # "mpeg", NOT a raw mpeg1video elementary stream), video-only. Files ship loose at

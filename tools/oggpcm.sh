@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # oggpcm.sh — convert Sonic Mania's music to loose streamable PCM for the Xbox.
 #
+# CREDIT: the format and approach are based on the Dreamcast port of RSDKv5 /
+# Sonic Mania — specifically its offline asset pipeline
+# (dreamcast/music_step_1_ogg_to_pcm.sh, OGG -> raw PCM) and the streamed
+# 22050 Hz / 8-bit / stereo PCM its audio backend uses (KallistiOSStream.cpp).
+# Extraction below reuses that port's dreamcast/rsdkv5_extract.py.
+#
 # The nxaudio music path (RSDK/Audio/Audio.cpp: LoadStreamLoosePCM /
 # UpdateStreamBufferLoosePCM) streams raw PCM straight from disc instead of
 # CPU-decoding OGG with stb_vorbis — the Dreamcast port's approach. Format is
