@@ -282,3 +282,7 @@ clean-xbox.sh
 SoundFXAD/
 # Generated loose PCM music (rebuild with tools/oggpcm.sh from an extracted Data.rsdk)
 MusicPCM/
+
+# Python bytecode
+__pycache__/
+*.pyc

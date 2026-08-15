@@ -1,5 +1,34 @@
 # tools/
 
+The Xbox port ships three **loose, gitignored asset sets** the engine loads off disc:
+`SoundFXAD/` (ADPCM SFX), `MusicPCM/` (streamable PCM music), and `Videos/*.mpg` (MPEG-1
+FMV). They are regenerated from `Data.rsdk` with the scripts here, so a fresh clone must
+rebuild them before the ISO has any audio/video.
+
+## Regenerate everything after a fresh clone
+
+```bash
+# 0) Extract SoundFX/, Music/, Video/ from Data.rsdk (read-only) with the vendored extractor.
+python3 tools/rsdk_extract/rsdkv5_extract.py Data.rsdk /tmp/rsdk_src
+# 1) SFX  -> Xbox ADPCM  (SoundFXAD/)
+python3 tools/xbadpcm.py --batch /tmp/rsdk_src/SoundFX SoundFXAD
+# 2) Music -> loose PCM  (MusicPCM/)
+tools/oggpcm.sh /tmp/rsdk_src/Music MusicPCM
+# 3) FMV  -> MPEG-1      (Videos/*.mpg)
+cp /tmp/rsdk_src/Video/*.ogv Videos/ && tools/mkmpg.sh
+# 4) Build; Makefile.nxdk stages all three into the ISO automatically.
+NO_XEMU=1 ./build-xbox.sh
+```
+
+## rsdk_extract/ — RSDKv5 `Data.rsdk` extractor (vendored)
+
+`rsdkv5_extract.py` + `rsdkv5.py` and the data files (`rsdk_file_list.txt`,
+`static_objects_list.txt`, `unknown_keys.txt`) pull named files out of a `Data.rsdk`
+archive (Python 3, read-only). **Vendored from the Dreamcast port of RSDKv5** (its
+`dreamcast/` offline pipeline) so this repo can regenerate assets without that tree present.
+Usage: `python3 tools/rsdk_extract/rsdkv5_extract.py Data.rsdk <output_dir>` — writes
+`<output_dir>/{SoundFX,Music,Video,...}/` (the `Data/` prefix is stripped).
+
 ## xbadpcm.py — Xbox ADPCM SFX encoder (host-side)
 
 Converts Sonic Mania's SFX to **Xbox ADPCM** (4-bit, fmt tag `0x0069`, 36-byte mono
@@ -15,9 +44,8 @@ bit depth), and stereo (downmix to mono — the APU SFX voices are mono).
 
 ### Regenerate `SoundFXAD/` (gitignored)
 ```bash
-# 1) Extract SoundFX/ from Data.rsdk (read-only) with the RSDKv5 decomp tool, e.g. the
-#    Dreamcast port's dreamcast/rsdkv5_extract.py under python3:
-python3 rsdkv5_extract.py /path/to/Data.rsdk /tmp/rsdk_src        # -> /tmp/rsdk_src/SoundFX/...
+# 1) Extract SoundFX/ from Data.rsdk (read-only) with the vendored extractor:
+python3 tools/rsdk_extract/rsdkv5_extract.py Data.rsdk /tmp/rsdk_src   # -> /tmp/rsdk_src/SoundFX/...
 # 2) Convert all SFX -> Xbox ADPCM into SoundFXAD/ (mirrors the SoundFX/ subdir layout):
 python3 tools/xbadpcm.py --batch /tmp/rsdk_src/SoundFX SoundFXAD
 # 3) Build; Makefile.nxdk stages SoundFXAD/ -> ISO as D:\SoundFXAD\ automatically.
@@ -60,8 +88,8 @@ the Vorbis CPU cost and shrinks `DATASET_MUS` (4.5 MB → 1 MB). The engine maps
 
 ### Regenerate `MusicPCM/` (gitignored)
 ```bash
-# 1) Extract Music/ from Data.rsdk (read-only) — e.g. the Dreamcast port's tool under python3:
-python3 rsdkv5_extract.py /path/to/Data.rsdk /tmp/rsdk_src     # -> /tmp/rsdk_src/Music/*.ogg
+# 1) Extract Music/ from Data.rsdk (read-only) with the vendored extractor:
+python3 tools/rsdk_extract/rsdkv5_extract.py Data.rsdk /tmp/rsdk_src   # -> /tmp/rsdk_src/Music/*.ogg
 # 2) Convert every track -> 22050/8-bit/stereo raw PCM into MusicPCM/:
 tools/oggpcm.sh /tmp/rsdk_src/Music MusicPCM
 # 3) Build; Makefile.nxdk stages MusicPCM/ -> ISO as D:\MusicPCM\ automatically.
