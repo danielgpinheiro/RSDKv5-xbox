@@ -77,7 +77,7 @@ int32 main(int32 argc, char *argv[]) { return RSDK_main(argc, argv, (void *)Link
 
 #if RETRO_PLATFORM == RETRO_XBOX
 #include <hal/xbox.h> // XLaunchXBE
-#ifdef RSDK_USE_SDL3
+#if defined(RSDK_USE_SDL3) || defined(RSDK_USE_PBKIT)
 #include <pbkit/pbkit.h>
 #endif
 
@@ -96,16 +96,17 @@ void SetXboxResolution()
     SCREEN_HEIGHT = 480;
     XVideoSetMode(SCREEN_WIDTH, SCREEN_HEIGHT, 16, REFRESH_DEFAULT);
 
-#ifdef RSDK_USE_SDL3
+#if defined(RSDK_USE_SDL3) || defined(RSDK_USE_PBKIT)
     pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5, false); // must precede pb_init
 #endif
 
-#ifdef RSDK_USE_SDL3
+#if defined(RSDK_USE_SDL3) || defined(RSDK_USE_PBKIT)
     // Initialize pbkit NOW, before the engine allocates its storage pools.
     // pb_init() needs several MB of contiguous physical memory below 64MB for its
     // framebuffers; allocating pools first fragments that region and pb_init fails
-    // with -11 inside SDL_CreateRenderer. The SDL3 XGU renderer detects the running
-    // pbkit instance (pb_init == -8) and reuses it.
+    // with -11. The SDL3 XGU renderer (and the PBKit device) detect the running pbkit
+    // instance (pb_init == -8) and reuse it. Without this, the PBKit device presented
+    // on an uninitialized GPU — full-screen noise.
     pb_size(128 * 1024); // we submit tiny command buffers; default 512KB wastes RAM
     int pbStatus = pb_init();
     if (pbStatus < 0 && pbStatus != -8)

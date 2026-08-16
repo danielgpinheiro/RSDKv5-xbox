@@ -173,6 +173,7 @@ enum GameRegions {
 #define RETRO_RENDERDEVICE_GLFW (0)
 #define RETRO_RENDERDEVICE_VK   (0)
 #define RETRO_RENDERDEVICE_EGL  (0)
+#define RETRO_RENDERDEVICE_PBKIT (0) // Xbox: direct-NV2A (pbkit/xgu) hardware renderer
 
 // ============================
 // AUDIO DEVICE BACKENDS
@@ -432,7 +433,20 @@ enum GameRegions {
 
 #elif RETRO_PLATFORM == RETRO_XBOX
 
-#ifdef RSDK_USE_SDL3
+#ifdef RSDK_USE_PBKIT
+
+// Tier 1 hardware renderer: the NV2A is driven directly via pbkit/xgu (no SDL_Renderer).
+// SDL3 is retained for input/events and nxdk-audio (MCPX APU) remains the audio backend.
+#undef RETRO_RENDERDEVICE_PBKIT
+#define RETRO_RENDERDEVICE_PBKIT (1)
+
+#undef RETRO_AUDIODEVICE_NXAUDIO
+#define RETRO_AUDIODEVICE_NXAUDIO (1)
+
+#undef RETRO_INPUTDEVICE_SDL3
+#define RETRO_INPUTDEVICE_SDL3 (1)
+
+#elif defined(RSDK_USE_SDL3)
 
 #undef RETRO_RENDERDEVICE_SDL3
 #define RETRO_RENDERDEVICE_SDL3 (1)

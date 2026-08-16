@@ -250,6 +250,8 @@ private:
 #include "SDL2/SDL2RenderDevice.hpp"
 #elif RETRO_RENDERDEVICE_SDL3
 #include "SDL3/SDL3RenderDevice.hpp"
+#elif RETRO_RENDERDEVICE_PBKIT
+#include "PBKit/PBKitRenderDevice.hpp"
 #elif RETRO_RENDERDEVICE_GLFW
 #include "GLFW/GLFWRenderDevice.hpp"
 #elif RETRO_RENDERDEVICE_VK

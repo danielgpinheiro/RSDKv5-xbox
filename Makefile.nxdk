@@ -65,7 +65,6 @@ LDFLAGS += -map:$(CURDIR)/main.map
 
 RSDK_FLAGS = \
 	-D__XBOX__ \
-	-DRSDK_USE_SDL3 \
 	-DSCREEN_XMAX=640 \
 	-DRETRO_STANDALONE=0 \
 	-DRETRO_REVISION=3 \
@@ -74,6 +73,30 @@ RSDK_FLAGS = \
 	-DRETRO_SFX_USE_S16 \
 	-DMINIZ_NO_STDIO \
 	-DMINIZ_NO_ARCHIVE_WRITING_APIS
+
+# Render backend (mutually exclusive). Default = SDL3 (presents the software framebuffer
+# through the nxdk_xgu SDL renderer). PBKIT=y selects the Tier 1 direct-NV2A render device
+# (RSDK/Graphics/PBKit) that drives pbkit/xgu itself; input stays on SDL3 either way.
+PBKIT ?= n
+ifeq ($(PBKIT),y)
+  RSDK_FLAGS += -DRSDK_USE_PBKIT
+  # The PBKit device includes the fork's xgu/xgux/swizzle headers directly.
+  INCLUDES   += -I$(CURDIR)/dependencies/xbox/nxdk-sdl3/nxdk_glue/render
+  # swizzle_box (used to lay out swizzled I8 textures) lives in a standalone .c that
+  # the engine link doesn't otherwise pull from libSDL3 — compile it in.
+  SRCS       += $(CURDIR)/dependencies/xbox/nxdk-sdl3/nxdk_glue/render/swizzle.c
+  # I8TEST=y overlays the Stage 0 hardware checkpoint (animated I8+CLUT square).
+  ifeq ($(I8TEST),y)
+    RSDK_FLAGS += -DPBKIT_I8_TEST
+  endif
+  # TRACE=y writes a boot trace to E:\UDATA\4D530063\pblog.txt and makes FlipScreen
+  # present a solid magenta clear (present-isolation diagnostic).
+  ifeq ($(TRACE),y)
+    RSDK_FLAGS += -DPBKIT_TRACE
+  endif
+else
+  RSDK_FLAGS += -DRSDK_USE_SDL3
+endif
 
 # Build posture. Default = performance: all PrintLog compiled out
 # (RETRO_DISABLE_LOG=1 — the per-line E:\log.txt I/O was a real FATX stall on
