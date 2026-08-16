@@ -178,6 +178,16 @@ struct SprBatch {
 SprBatch sprBatches[MAX_SPR_BATCHES];
 int32 sprBatchCount = 0;
 
+// Only offload sprites during live gameplay. GPU sprites composite over the software
+// framebuffer (drawn last, on top), which breaks the interleaved draw order of overlay
+// screens — the pause menu, results, dev menu — where panels are software (fb) and text
+// is GPU. Keeping those on the CPU path preserves their order; gameplay (where the perf
+// matters) stays on the GPU. Mirrors the SDL3 special-stage offload's ENGINESTATE gate.
+inline bool PBSpriteOffloadOK()
+{
+    return sprVerts && pbClut && videoSettings.screenCount == 1 && sceneInfo.state == ENGINESTATE_REGULAR;
+}
+
 // Map an ink effect to a GPU blend + vertex alpha. false = unsupported (software path).
 inline bool SprInkToBlend(int32 inkEffect, int32 alpha, XguBlendFactor *sf, XguBlendFactor *df, float *a)
 {
@@ -190,10 +200,11 @@ inline bool SprInkToBlend(int32 inkEffect, int32 alpha, XguBlendFactor *sf, XguB
     }
 }
 
-// Append one textured quad (4 corners TL,TR,BL,BR in back-buffer pixels; UVs u0,v0..u1,v1),
-// coalescing with the previous batch when texture+bank+blend match.
-bool EmitSpriteQuad(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor df, float a, float x0, float y0, float x1, float y1, float u0,
-                    float v0, float u1, float v1)
+// Append one textured quad from 4 arbitrary corners (px/py order TL,TR,BL,BR in
+// back-buffer pixels; UVs normalized to the POT container u0,v0..u1,v1), coalescing
+// with the previous batch when texture+bank+blend match. Handles rotated/scaled quads.
+bool EmitSpriteQuadCorners(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor df, float a, const float px[4], const float py[4], float u0,
+                           float v0, float u1, float v1)
 {
     if (!sprVerts || sprVertCount + 6 > MAX_SPR_VERTS)
         return false;
@@ -204,10 +215,6 @@ bool EmitSpriteQuad(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor 
         return false;
 
     uint8 alpha8 = (uint8)(a * 255.0f);
-    // UVs are normalized to the POT container (0..1 = full container), matching the
-    // verified I8 test path; the caller derives them from the sprite sub-rect / texW,texH.
-    const float px[4] = { x0, x1, x0, x1 };
-    const float py[4] = { y0, y0, y1, y1 };
     const float tu[4] = { u0, u1, u0, u1 };
     const float tv[4] = { v0, v0, v1, v1 };
     const int32 order[6] = { 0, 1, 2, 1, 3, 2 };
@@ -229,6 +236,15 @@ bool EmitSpriteQuad(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor 
     else
         sprBatches[sprBatchCount++] = { start, 6, t->phys, t->texW, t->texH, bank, sf, df };
     return true;
+}
+
+// Axis-aligned convenience wrapper (unscaled sprites).
+bool EmitSpriteQuad(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor df, float a, float x0, float y0, float x1, float y1, float u0,
+                    float v0, float u1, float v1)
+{
+    const float px[4] = { x0, x1, x0, x1 };
+    const float py[4] = { y0, y0, y1, y1 };
+    return EmitSpriteQuadCorners(t, bank, sf, df, a, px, py, u0, v0, u1, v1);
 }
 
 // Draw the accumulated sprite batches over the presented framebuffer (called in FlipScreen).
@@ -968,10 +984,68 @@ void RenderDevice::Add3DBlendedFace(Vector2 *vertices, uint32 *colors, int32 ver
 {
     (void)vertices; (void)colors; (void)vertCount; (void)alpha; (void)inkEffect;
 }
+// Rotozoom / scaled sprites (Stage 2): DrawSpriteRotozoom hands us the 4 transformed
+// corners (rotation + scale + flip already applied); draw them as an I8 textured GPU
+// quad instead of the software fill. Returns true = handled on GPU.
 bool RenderDevice::DrawSpriteGPU(int32 *posX, int32 *posY, int32 sprX, int32 sprY, int32 width, int32 height, int32 sheetID, int32 inkEffect,
                                  int32 alpha)
 {
-    (void)posX; (void)posY; (void)sprX; (void)sprY; (void)width; (void)height; (void)sheetID; (void)inkEffect; (void)alpha;
+#ifdef PBKIT_NO_GPU_SPRITES
+    return false;
+#endif
+    if (!PBSpriteOffloadOK() || width <= 0 || height <= 0)
+        return false;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    PBSurfTex *t = GetSurfaceTexture(sheetID);
+    if (!t)
+        return false;
+
+    // Sanity: DrawSpriteRotozoom only fills valid corners for FLIP_NONE/FLIP_X; FLIP_Y/
+    // FLIP_XY leave them unset. We don't get `direction`, so reject wildly out-of-range
+    // corners (a garbage screen-covering quad) and let the software path handle them.
+    for (int32 i = 0; i < 4; ++i)
+        if (posX[i] < -2048 || posX[i] > 2048 || posY[i] < -2048 || posY[i] > 2048)
+            return false;
+
+    // Palette bank at the topmost corner.
+    int32 topY = posY[0];
+    for (int32 i = 1; i < 4; ++i)
+        if (posY[i] < topY)
+            topY = posY[i];
+    topY       = topY < 0 ? 0 : (topY >= SCREEN_YSIZE ? SCREEN_YSIZE - 1 : topY);
+    int32 bank = gfxLineBuffer[topY] & (PALETTE_BANK_COUNT - 1);
+
+    // The corners span the sprite PLUS a 2px margin on each edge (DrawSpriteRotozoom's
+    // pivot-2 .. pivot+2+width corner math — extra coverage for the software rotate/fill).
+    // Feeding that margin to the GPU sampled adjacent sheet texels -> a dark fringe around
+    // rotated sprites. Instead INSET the quad to the exact sprite via bilinear interpolation
+    // of the 4 corners, and map UVs to exactly the sprite (no margin).
+    float sx = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    // Corner order matches DrawSpriteRotozoom: [0]=TL, [1]=TR, [2]=BL, [3]=BR. Bilinear:
+    // c(u,v) = (1-u)(1-v)TL + u(1-v)TR + (1-u)v BL + uv BR.
+    const float cx[4] = { posX[0] * sx, posX[1] * sx, posX[2] * sx, posX[3] * sx };
+    const float cy[4] = { posY[0] * sy, posY[1] * sy, posY[2] * sy, posY[3] * sy };
+    float fu = 2.0f / (float)(width + 4);
+    float fv = 2.0f / (float)(height + 4);
+    const float cu[4] = { fu, 1.0f - fu, fu, 1.0f - fu };       // TL TR BL BR
+    const float cv[4] = { fv, fv, 1.0f - fv, 1.0f - fv };
+    float px[4], py[4];
+    for (int32 i = 0; i < 4; ++i) {
+        float u = cu[i], v = cv[i];
+        float w0 = (1 - u) * (1 - v), w1 = u * (1 - v), w2 = (1 - u) * v, w3 = u * v;
+        px[i]    = w0 * cx[0] + w1 * cx[1] + w2 * cx[2] + w3 * cx[3];
+        py[i]    = w0 * cy[0] + w1 * cy[1] + w2 * cy[2] + w3 * cy[3];
+    }
+    float u0 = (float)sprX / (float)t->texW, u1 = (float)(sprX + width) / (float)t->texW;
+    float v0 = (float)sprY / (float)t->texH, v1 = (float)(sprY + height) / (float)t->texH;
+    if (EmitSpriteQuadCorners(t, bank, sf, df, a, px, py, u0, v0, u1, v1)) {
+        validDraw = true;
+        return true;
+    }
     return false;
 }
 // Real paletted-quad path (Stage 2): draw an unscaled sprite as an I8 textured GPU quad
@@ -984,9 +1058,8 @@ bool RenderDevice::DrawSpriteFlippedGPU(int32 x, int32 y, int32 width, int32 hei
     // rendering, to isolate whether the GPU sprite path is causing a regression.
     return false;
 #endif
-    // Single-screen only for now (splitscreen viewports are Stage 7). Fall back to
-    // software when the GPU staging isn't available or the ink isn't GPU-supported.
-    if (!sprVerts || !pbClut || videoSettings.screenCount != 1 || width <= 0 || height <= 0)
+    // Gameplay-only (see PBSpriteOffloadOK); single-screen; GPU-supported ink.
+    if (!PBSpriteOffloadOK() || width <= 0 || height <= 0)
         return false;
     XguBlendFactor sf, df;
     float a;
