@@ -14,7 +14,6 @@
 
 #include <pbkit/pbkit.h>
 #include <xboxkrnl/xboxkrnl.h>
-#include <stdio.h>
 #include "xgu/xgu.h"
 #include "xgu/xgux.h"
 // swizzle.h has no C++ linkage guard, but swizzle.c is compiled as C — declare its
@@ -43,32 +42,6 @@ namespace {
 // pbkit push-buffer pointer — used by the combiner helpers copied verbatim below.
 uint32_t *p = nullptr;
 
-// --- E:\ boot tracer (TRACE=y) -----------------------------------------------
-// debugPrint/xbwatson is dead on this retail-kernel console, so trace to a file on
-// the writable save partition. Rewrite the WHOLE accumulated log each call so it
-// survives a hard freeze (per the port's diagnostics convention).
-#ifdef PBKIT_TRACE
-char pbTraceBuf[4096];
-int32 pbTraceLen = 0;
-void PBLog(const char *msg)
-{
-    int32 n = snprintf(pbTraceBuf + pbTraceLen, sizeof(pbTraceBuf) - pbTraceLen, "%s\n", msg);
-    if (n > 0)
-        pbTraceLen += n;
-    // Win32 API (matches UserStorage.cpp) + E:\ ROOT — this runs before the boot creates
-    // E:\UDATA\4D530063\, and nxdk's fopen to a FATX drive is unreliable. Rewrite whole.
-    HANDLE h = CreateFileA("E:\\pblog.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h != INVALID_HANDLE_VALUE) {
-        DWORD written = 0;
-        WriteFile(h, pbTraceBuf, (DWORD)pbTraceLen, &written, NULL);
-        CloseHandle(h);
-    }
-}
-#define PBLOG(m) PBLog(m)
-#else
-#define PBLOG(m) ((void)0)
-#endif
-
 // The present texture: a POT, linear RGB565 container that the software framebuffer
 // is uploaded into each frame, then drawn as one fullscreen quad. 512x256 fits the
 // pinned 320x240 4:3 internal resolution.
@@ -95,17 +68,203 @@ PBVertex *presentVerts = nullptr; // 6 verts
 // data through this; without it, rendering reads garbage VRAM -> full-screen noise.
 struct s_CtxDma renderTargetDmaCtx;
 
-// --- GPU-init helpers, copied verbatim from SDL_render_xgu.c ------------------
-// clang-format off
-static inline uint32_t npot2pot(uint32_t num)
+// ===========================================================================
+// Stage 2: paletted sprite path — 8bpp I8 textures + hardware CLUT.
+//
+// Each GFXSurface's already-8bpp pixels are uploaded once as a swizzled I8 texture;
+// the game's 8 palette banks (fullPalette, RGB565) are synced into a single 8x256
+// ARGB CLUT each frame (index 0 -> alpha 0 = transparent), and a batch selects its
+// bank via the NV2A palette OFFSET (bank*256*4, passed >>6). Sprite quads accumulate
+// during the frame (batched by texture+bank+blend) and are drawn over the software
+// framebuffer at present. Palette cycling is a free CLUT rewrite — no texture re-bake.
+// ===========================================================================
+// Round up to a power of two (swizzled textures need a POT container).
+inline uint32 npot2pot(uint32 num)
 {
-    uint32_t msb;
+    if (num < 2)
+        return 1;
+    uint32 msb;
     __asm__("bsr %1, %0" : "=r"(msb) : "r"(num));
-    if ((1 << msb) == num)
+    if ((1u << msb) == num)
         return num;
-    return 1 << (msb + 1);
+    return 1u << (msb + 1);
 }
 
+inline uint32 RGB565toARGB(uint16 c)
+{
+    uint32 r5 = (c >> 11) & 0x1F, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
+    uint32 r8 = (r5 << 3) | (r5 >> 2), g8 = (g6 << 2) | (g6 >> 4), b8 = (b5 << 3) | (b5 >> 2);
+    return 0xFF000000u | (r8 << 16) | (g8 << 8) | b8;
+}
+
+// One 8x256 ARGB CLUT (contiguous, 64B-aligned): bank b at byte offset b*256*4.
+uint32 *pbClut     = nullptr;
+uint8 *pbClutPhys  = nullptr;
+
+void PBSyncCLUT()
+{
+    if (!pbClut)
+        return;
+    // Sync all 8 banks from fullPalette. Index 0 -> alpha 0 (transparent), matching the
+    // software blit's `if (*pixels > 0)`. Cheap enough to do every frame (2048 entries);
+    // dirty-tracking is a later optimization.
+    for (int32 bank = 0; bank < PALETTE_BANK_COUNT; ++bank) {
+        uint16 *src = fullPalette[bank];
+        uint32 *dst = &pbClut[bank * 256];
+        dst[0]      = 0; // transparent
+        for (int32 i = 1; i < 256; ++i) dst[i] = RGB565toARGB(src[i]);
+    }
+}
+
+// --- per-surface I8 texture cache (indexed by sheetID) -----------------------
+struct PBSurfTex {
+    uint8 *builtFrom = nullptr; // surface->pixels this was built from (invalidate on change)
+    uint8 *data      = nullptr;
+    uint8 *phys      = nullptr;
+    int32 texW = 0, texH = 0; // POT swizzled container
+    int32 w = 0, h = 0;       // logical
+};
+PBSurfTex pbSurfTex[SURFACE_COUNT];
+
+PBSurfTex *GetSurfaceTexture(int32 sheetID)
+{
+    if (sheetID < 0 || sheetID >= SURFACE_COUNT)
+        return nullptr;
+    GFXSurface *surface = &gfxSurface[sheetID];
+    if (!surface->pixels || surface->width <= 0 || surface->height <= 0)
+        return nullptr;
+
+    PBSurfTex *t = &pbSurfTex[sheetID];
+    if (t->data && t->builtFrom == surface->pixels && t->w == surface->width && t->h == surface->height)
+        return t; // still valid
+
+    if (t->data) { // surface was reloaded/replaced — drop the stale texture
+        MmFreeContiguousMemory(t->data);
+        t->data = nullptr;
+    }
+
+    int32 texW = (int32)npot2pot((uint32)surface->width);
+    int32 texH = (int32)npot2pot((uint32)surface->height);
+    uint8 *data = (uint8 *)MmAllocateContiguousMemoryEx((SIZE_T)texW * texH, 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+    if (!data)
+        return nullptr;
+    // Swizzle the 8bpp indices (bpp=1). Source pitch = surface->width; the swizzler reads
+    // width x height from the source into the POT container.
+    memset(data, 0, (size_t)texW * texH);
+    swizzle_rect(surface->pixels, surface->width, surface->height, data, surface->width, 1);
+
+    t->builtFrom = surface->pixels;
+    t->data      = data;
+    t->phys      = (uint8 *)MmGetPhysicalAddress(data);
+    t->texW      = texW;
+    t->texH      = texH;
+    t->w         = surface->width;
+    t->h         = surface->height;
+    return t;
+}
+
+// --- sprite quad batches -----------------------------------------------------
+#define MAX_SPR_VERTS   (12288) // 2048 quads
+#define MAX_SPR_BATCHES (1024)
+PBVertex *sprVerts = nullptr;
+int32 sprVertCount = 0;
+struct SprBatch {
+    int32 start, count;
+    uint8 *texPhys;
+    int32 texW, texH;
+    int32 bank;
+    XguBlendFactor sfactor, dfactor;
+};
+SprBatch sprBatches[MAX_SPR_BATCHES];
+int32 sprBatchCount = 0;
+
+// Map an ink effect to a GPU blend + vertex alpha. false = unsupported (software path).
+inline bool SprInkToBlend(int32 inkEffect, int32 alpha, XguBlendFactor *sf, XguBlendFactor *df, float *a)
+{
+    switch (inkEffect) {
+        case INK_NONE: *sf = XGU_FACTOR_SRC_ALPHA; *df = XGU_FACTOR_ONE_MINUS_SRC_ALPHA; *a = 1.0f; return true;
+        case INK_BLEND: *sf = XGU_FACTOR_SRC_ALPHA; *df = XGU_FACTOR_ONE_MINUS_SRC_ALPHA; *a = 0.5f; return true;
+        case INK_ALPHA: *sf = XGU_FACTOR_SRC_ALPHA; *df = XGU_FACTOR_ONE_MINUS_SRC_ALPHA; *a = (alpha > 0xFF ? 0xFF : (alpha < 0 ? 0 : alpha)) / 255.0f; return true;
+        case INK_ADD: *sf = XGU_FACTOR_SRC_ALPHA; *df = XGU_FACTOR_ONE; *a = (alpha > 0xFF ? 0xFF : (alpha < 0 ? 0 : alpha)) / 255.0f; return true;
+        default: return false; // SUB/TINT/MASKED -> software for now
+    }
+}
+
+// Append one textured quad (4 corners TL,TR,BL,BR in back-buffer pixels; UVs u0,v0..u1,v1),
+// coalescing with the previous batch when texture+bank+blend match.
+bool EmitSpriteQuad(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor df, float a, float x0, float y0, float x1, float y1, float u0,
+                    float v0, float u1, float v1)
+{
+    if (!sprVerts || sprVertCount + 6 > MAX_SPR_VERTS)
+        return false;
+    bool coalesce = sprBatchCount > 0 && sprBatches[sprBatchCount - 1].texPhys == t->phys && sprBatches[sprBatchCount - 1].bank == bank
+                    && sprBatches[sprBatchCount - 1].sfactor == sf && sprBatches[sprBatchCount - 1].dfactor == df
+                    && sprBatches[sprBatchCount - 1].start + sprBatches[sprBatchCount - 1].count == sprVertCount;
+    if (!coalesce && sprBatchCount >= MAX_SPR_BATCHES)
+        return false;
+
+    uint8 alpha8 = (uint8)(a * 255.0f);
+    // UVs are normalized to the POT container (0..1 = full container), matching the
+    // verified I8 test path; the caller derives them from the sprite sub-rect / texW,texH.
+    const float px[4] = { x0, x1, x0, x1 };
+    const float py[4] = { y0, y0, y1, y1 };
+    const float tu[4] = { u0, u1, u0, u1 };
+    const float tv[4] = { v0, v0, v1, v1 };
+    const int32 order[6] = { 0, 1, 2, 1, 3, 2 };
+    int32 start = sprVertCount;
+    for (int32 i = 0; i < 6; ++i) {
+        int32 c              = order[i];
+        PBVertex *v          = &sprVerts[sprVertCount++];
+        v->pos[0]            = px[c];
+        v->pos[1]            = py[c];
+        v->color[0]          = 0xFF;
+        v->color[1]          = 0xFF;
+        v->color[2]          = 0xFF;
+        v->color[3]          = alpha8;
+        v->tex[0]            = tu[c];
+        v->tex[1]            = tv[c];
+    }
+    if (coalesce)
+        sprBatches[sprBatchCount - 1].count += 6;
+    else
+        sprBatches[sprBatchCount++] = { start, 6, t->phys, t->texW, t->texH, bank, sf, df };
+    return true;
+}
+
+// Draw the accumulated sprite batches over the presented framebuffer (called in FlipScreen).
+void FlushSpriteBatches()
+{
+    if (!sprBatchCount)
+        return;
+    for (int32 i = 0; i < sprBatchCount; ++i) {
+        SprBatch *b = &sprBatches[i];
+        p = pb_begin();
+        p = xgu_set_blend_func_sfactor(p, b->sfactor);
+        p = xgu_set_blend_func_dfactor(p, b->dfactor);
+        p = xgu_set_texture_offset(p, 0, b->texPhys);
+        p = xgu_set_texture_format(p, 0, 2, false, XGU_SOURCE_COLOR, 2, XGU_TEXTURE_FORMAT_I8_A8R8G8B8_SWIZZLED, 1, __builtin_ctz(b->texW),
+                                   __builtin_ctz(b->texH), 0);
+        p = xgu_set_texture_control0(p, 0, true, 0, 0);
+        p = xgu_set_texture_control1(p, 0, b->texW);
+        p = xgu_set_texture_image_rect(p, 0, b->texW, b->texH);
+        // Select the palette bank: byte offset bank*256*4 into the CLUT, passed >>6.
+        p = xgu_set_texture_palette(p, 0, true, XGU_PALETTE_LENGTH_256, (void *)(((uint32_t)pbClutPhys + (uint32_t)b->bank * 256u * 4u) >> 6));
+        p = xgu_set_texture_filter(p, 0, 0, XGU_TEXTURE_CONVOLUTION_GAUSSIAN, XGU_TEXTURE_FILTER_NEAREST, XGU_TEXTURE_FILTER_NEAREST, false, false,
+                                   false, false);
+        p = xgu_set_texture_address(p, 0, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, false);
+        pb_end(p);
+
+        xgux_set_attrib_pointer(XGU_VERTEX_ARRAY, XGU_FLOAT, 2, sizeof(PBVertex), sprVerts[b->start].pos);
+        xgux_set_attrib_pointer(XGU_COLOR_ARRAY, XGU_UNSIGNED_BYTE_OGL, 4, sizeof(PBVertex), sprVerts[b->start].color);
+        xgux_set_attrib_pointer(XGU_TEXCOORD0_ARRAY, XGU_FLOAT, 2, sizeof(PBVertex), sprVerts[b->start].tex);
+        xgux_draw_arrays(XGU_TRIANGLES, 0, b->count);
+    }
+}
+
+
+// --- GPU-init helpers, copied verbatim from SDL_render_xgu.c ------------------
+// clang-format off
+// (npot2pot is defined earlier, above the Stage 2 texture cache that first uses it.)
 static void set_surface_color_format(const int bpp)
 {
     if (bpp == 16)
@@ -322,16 +481,13 @@ static void SDLCALL PBSDLLogOutput(void *userdata, int category, SDL_LogPriority
 
 bool RenderDevice::Init()
 {
-    PBLOG("Init: enter");
     SDL_SetLogOutputFunction(PBSDLLogOutput, NULL);
 
     // Events + video are needed for the window/event pump the input device rides on.
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
-        PBLOG("Init: SDL_InitSubSystem FAILED");
         PrintLog(PRINT_NORMAL, "ERROR: SDL_InitSubSystem failed: %s", SDL_GetError());
         return false;
     }
-    PBLOG("Init: SDL_InitSubSystem ok");
 
     videoSettings.windowed = false;
 
@@ -341,34 +497,22 @@ bool RenderDevice::Init()
     VIDEO_MODE vm = XVideoGetMode();
     window        = SDL_CreateWindow(gameVerInfo.gameTitle, vm.width, vm.height, SDL_WINDOW_FULLSCREEN);
     if (!window) {
-        PBLOG("Init: SDL_CreateWindow FAILED (window==null)");
         PrintLog(PRINT_NORMAL, "ERROR: failed to create window: %s", SDL_GetError());
         return false;
     }
-    PBLOG("Init: window created");
 
     SDL_GetWindowSize(window, &videoSettings.windowWidth, &videoSettings.windowHeight);
     PrintLog(PRINT_NORMAL, "pbkit renderer: w %d h %d", videoSettings.windowWidth, videoSettings.windowHeight);
 
-    if (!SetupRendering()) {
-        PBLOG("Init: SetupRendering FAILED");
+    if (!SetupRendering() || !AudioDevice::Init())
         return false;
-    }
-    PBLOG("Init: SetupRendering ok");
-    if (!AudioDevice::Init()) {
-        PBLOG("Init: AudioDevice::Init FAILED");
-        return false;
-    }
-    PBLOG("Init: AudioDevice::Init ok");
 
     InitInputDevices();
-    PBLOG("Init: return true");
     return true;
 }
 
 bool RenderDevice::SetupRendering()
 {
-    PBLOG("SR: enter");
     // pbkit was already initialized in main.cpp (before pool allocation fragmented the
     // low-64MB contiguous region). Re-assert the surface format + full NV2A pipeline
     // state, matching the proven nxdk_xgu setup.
@@ -489,16 +633,16 @@ bool RenderDevice::InitGraphicsAPI()
         fbTex.phys = (uint8 *)MmGetPhysicalAddress(fbTex.data);
         memset(fbTex.data, 0, (size_t)PB_FB_TEX_H * fbTex.pitch);
     }
-#ifdef PBKIT_TRACE
-    {
-        char b[96];
-        sprintf_s(b, sizeof(b), "IGA: fbTex=%p phys=%p pixW=%d", (void *)fbTex.data, (void *)fbTex.phys, (int)videoSettings.pixWidth);
-        PBLOG(b);
-    }
-#endif
-
     if (!presentVerts)
         presentVerts = (PBVertex *)MmAllocateContiguousMemoryEx(6 * sizeof(PBVertex), 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+
+    // Stage 2: 8x256 ARGB CLUT (64B-aligned contiguous) + the sprite quad vertex ring.
+    if (!pbClut) {
+        pbClut     = (uint32 *)MmAllocateContiguousMemoryEx(PALETTE_BANK_COUNT * 256 * sizeof(uint32), 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+        pbClutPhys = pbClut ? (uint8 *)MmGetPhysicalAddress(pbClut) : nullptr;
+    }
+    if (!sprVerts)
+        sprVerts = (PBVertex *)MmAllocateContiguousMemoryEx(MAX_SPR_VERTS * sizeof(PBVertex), 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
 
     lastShaderID = -1;
     InitVertexBuffer();
@@ -525,6 +669,22 @@ void RenderDevice::Release(bool32 isRefresh)
         if (presentVerts) {
             MmFreeContiguousMemory(presentVerts);
             presentVerts = nullptr;
+        }
+        if (pbClut) {
+            MmFreeContiguousMemory(pbClut);
+            pbClut     = nullptr;
+            pbClutPhys = nullptr;
+        }
+        if (sprVerts) {
+            MmFreeContiguousMemory(sprVerts);
+            sprVerts = nullptr;
+        }
+        for (int32 i = 0; i < SURFACE_COUNT; ++i) {
+            if (pbSurfTex[i].data) {
+                MmFreeContiguousMemory(pbSurfTex[i].data);
+                pbSurfTex[i].data      = nullptr;
+                pbSurfTex[i].builtFrom = nullptr;
+            }
         }
         if (displayInfo.displays)
             free(displayInfo.displays);
@@ -569,6 +729,7 @@ void RenderDevice::CopyFrameBuffer()
         src += screens[0].pitch;
         dst += dstStride;
     }
+
 }
 
 void RenderDevice::FlipScreen()
@@ -583,9 +744,12 @@ void RenderDevice::FlipScreen()
     const float bw = (float)pb_back_buffer_width();
     const float bh = (float)pb_back_buffer_height();
 
-    // UVs: the framebuffer occupies the top-left size.x x size.y of the POT container.
-    const float u1 = (float)screens[0].size.x / (float)PB_FB_TEX_W;
-    const float v1 = (float)screens[0].size.y / (float)PB_FB_TEX_H;
+    // UVs in TEXELS: the NV2A samples LINEAR textures (this RGB565 present texture) with
+    // texel coordinates, not normalized [0,1] (swizzled textures use normalized — that's
+    // why the I8 sprite path uses 0..1). The framebuffer occupies the top-left
+    // size.x x size.y texels of the POT container.
+    const float u1 = (float)screens[0].size.x;
+    const float v1 = (float)screens[0].size.y;
 
     // Dimming (fades): modulate the present quad's vertex color.
     float dimAmount = videoSettings.dimMax * videoSettings.dimPercent;
@@ -613,36 +777,15 @@ void RenderDevice::FlipScreen()
 
     pb_target_back_buffer();
 
-#ifdef PBKIT_TRACE
-    // Isolation mode: fill the back buffer solid MAGENTA and present, skipping the
-    // textured quad entirely. If the screen turns magenta, boot + present + swap work
-    // and the bug is the texture path. If it stays noise, FlipScreen isn't running or
-    // the swap doesn't display our buffer. Trace the first few flips to the E:\ log.
-    {
-        static int32 flipCount = 0;
-        if (flipCount < 5) {
-            char b[64];
-            sprintf_s(b, sizeof(b), "Flip: #%d (bw=%d bh=%d)", (int)flipCount, (int)bw, (int)bh);
-            PBLOG(b);
-        }
-        ++flipCount;
-    }
-    pb_fill(0, 0, (int)bw, (int)bh, 0xFFFF00FF); // magenta
-    while (pb_busy())
-        Sleep(0);
-    while (pb_finished())
-        Sleep(0);
-    pb_wait_for_vbl();
-    pb_reset();
-    return;
-#endif
-
     // Defensive clear so any area the present quad doesn't cover is black, not garbage.
     pb_fill(0, 0, (int)bw, (int)bh, 0xFF000000);
 
-    // Bind the present texture (linear RGB565) and draw the quad.
+    // Bind the present texture (linear RGB565) and draw the quad. Reset the blend func
+    // to standard alpha-over (sprite batches leave it at their last mode).
     p = pb_begin();
     texture_combiner_apply();
+    p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_SRC_ALPHA);
+    p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_ONE_MINUS_SRC_ALPHA);
     p = xgu_set_texture_offset(p, 0, fbTex.phys);
     p = xgu_set_texture_format(p, 0, 2, false, XGU_SOURCE_COLOR, 2, XGU_TEXTURE_FORMAT_R5G6B5, 1, __builtin_ctz(PB_FB_TEX_W), __builtin_ctz(PB_FB_TEX_H), 0);
     p = xgu_set_texture_control0(p, 0, true, 0, 0);
@@ -657,6 +800,11 @@ void RenderDevice::FlipScreen()
     xgux_set_attrib_pointer(XGU_TEXCOORD0_ARRAY, XGU_FLOAT, 2, sizeof(PBVertex), presentVerts->tex);
     xgux_draw_arrays(XGU_TRIANGLES, 0, 6);
 
+    // Stage 2: sync the 8-bank CLUT from the (possibly cycled) palette, then draw the
+    // accumulated GPU sprite quads over the framebuffer background, in draw order.
+    PBSyncCLUT();
+    FlushSpriteBatches();
+
 #ifdef PBKIT_I8_TEST
     I8Test_Draw(); // Stage 0 hardware checkpoint: paletted I8 + animated CLUT overlay
 #endif
@@ -668,6 +816,10 @@ void RenderDevice::FlipScreen()
         Sleep(0);
     pb_wait_for_vbl();
     pb_reset();
+
+    // Reset sprite accumulation for the next frame.
+    sprVertCount  = 0;
+    sprBatchCount = 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -822,9 +974,53 @@ bool RenderDevice::DrawSpriteGPU(int32 *posX, int32 *posY, int32 sprX, int32 spr
     (void)posX; (void)posY; (void)sprX; (void)sprY; (void)width; (void)height; (void)sheetID; (void)inkEffect; (void)alpha;
     return false;
 }
+// Real paletted-quad path (Stage 2): draw an unscaled sprite as an I8 textured GPU quad
+// instead of the software blit. Returns true = handled on GPU.
 bool RenderDevice::DrawSpriteFlippedGPU(int32 x, int32 y, int32 width, int32 height, int32 sprX, int32 sprY, int32 direction, int32 sheetID,
                                         int32 inkEffect, int32 alpha)
 {
-    (void)x; (void)y; (void)width; (void)height; (void)sprX; (void)sprY; (void)direction; (void)sheetID; (void)inkEffect; (void)alpha;
+#ifdef PBKIT_NO_GPU_SPRITES
+    // Diagnostic (NOSPR=y): force the software path -> full Stage-1 all-in-framebuffer
+    // rendering, to isolate whether the GPU sprite path is causing a regression.
+    return false;
+#endif
+    // Single-screen only for now (splitscreen viewports are Stage 7). Fall back to
+    // software when the GPU staging isn't available or the ink isn't GPU-supported.
+    if (!sprVerts || !pbClut || videoSettings.screenCount != 1 || width <= 0 || height <= 0)
+        return false;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    PBSurfTex *t = GetSurfaceTexture(sheetID);
+    if (!t)
+        return false;
+
+    // Palette bank at the sprite's top scanline (per-line palette assumed uniform over
+    // the sprite — same approximation the software per-scanline path collapses to here).
+    int32 topY = y < 0 ? 0 : (y >= SCREEN_YSIZE ? SCREEN_YSIZE - 1 : y);
+    int32 bank = gfxLineBuffer[topY] & (PALETTE_BANK_COUNT - 1);
+
+    float u0 = (float)sprX / (float)t->texW, u1 = (float)(sprX + width) / (float)t->texW;
+    float v0 = (float)sprY / (float)t->texH, v1 = (float)(sprY + height) / (float)t->texH;
+    if (direction & FLIP_X) {
+        float tmp = u0;
+        u0        = u1;
+        u1        = tmp;
+    }
+    if (direction & FLIP_Y) {
+        float tmp = v0;
+        v0        = v1;
+        v1        = tmp;
+    }
+
+    // Logical (screen) pixels -> back-buffer pixels (the fb present maps pixWidth x
+    // SCREEN_YSIZE onto the full 640x480, so GPU sprites use the same scale to align).
+    float sx = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    if (EmitSpriteQuad(t, bank, sf, df, a, x * sx, y * sy, (x + width) * sx, (y + height) * sy, u0, v0, u1, v1)) {
+        validDraw = true; // mirror the software path so entity on-screen tracking works
+        return true;
+    }
     return false;
 }

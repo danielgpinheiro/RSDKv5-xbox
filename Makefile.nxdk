@@ -85,14 +85,15 @@ ifeq ($(PBKIT),y)
   # swizzle_box (used to lay out swizzled I8 textures) lives in a standalone .c that
   # the engine link doesn't otherwise pull from libSDL3 — compile it in.
   SRCS       += $(CURDIR)/dependencies/xbox/nxdk-sdl3/nxdk_glue/render/swizzle.c
-  # I8TEST=y overlays the Stage 0 hardware checkpoint (animated I8+CLUT square).
+  # I8TEST=y overlays the Stage 0 hardware checkpoint (animated I8+CLUT square) — kept
+  # because the NV2A I8/CLUT path still needs real-hardware validation.
   ifeq ($(I8TEST),y)
     RSDK_FLAGS += -DPBKIT_I8_TEST
   endif
-  # TRACE=y writes a boot trace to E:\UDATA\4D530063\pblog.txt and makes FlipScreen
-  # present a solid magenta clear (present-isolation diagnostic).
-  ifeq ($(TRACE),y)
-    RSDK_FLAGS += -DPBKIT_TRACE
+  # NOSPR=y forces sprites back through the software framebuffer (all-software present) —
+  # a diagnostic toggle for isolating GPU-sprite vs framebuffer issues.
+  ifeq ($(NOSPR),y)
+    RSDK_FLAGS += -DPBKIT_NO_GPU_SPRITES
   endif
 else
   RSDK_FLAGS += -DRSDK_USE_SDL3
