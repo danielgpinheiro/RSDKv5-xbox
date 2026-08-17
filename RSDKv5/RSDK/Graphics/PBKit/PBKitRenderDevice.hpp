@@ -85,6 +85,10 @@ public:
                               int32 alpha);
     static bool DrawSpriteFlippedGPU(int32 x, int32 y, int32 width, int32 height, int32 sprX, int32 sprY, int32 direction, int32 sheetID,
                                      int32 inkEffect, int32 alpha);
+    // 2D primitives as untextured colored GPU polys (Stage 3). Return true = handled.
+    static bool DrawRectangleGPU(int32 x, int32 y, int32 width, int32 height, uint32 color, int32 alpha, int32 inkEffect);
+    static bool DrawFaceGPU(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect);
+    static bool DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect);
 
 private:
     static bool SetupRendering();

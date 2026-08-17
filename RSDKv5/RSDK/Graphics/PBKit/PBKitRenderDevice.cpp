@@ -1173,6 +1173,64 @@ bool RenderDevice::DrawSpriteGPU(int32 *posX, int32 *posY, int32 sprX, int32 spr
     }
     return false;
 }
+
+// --- 2D primitives as untextured colored polys (Stage 3) ---------------------
+// DrawRectangle: x,y,width,height are already clipped screen pixels; color is 0xRRGGBB.
+bool RenderDevice::DrawRectangleGPU(int32 x, int32 y, int32 width, int32 height, uint32 color, int32 alpha, int32 inkEffect)
+{
+    if (!PBSpriteOffloadOK() || width <= 0 || height <= 0)
+        return false;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    // 16.16 quad corners TL,TR,BR,BL (EmitColoredPoly fans 0-1-2 / 0-2-3).
+    Vector2 v[4]   = { { x << 16, y << 16 }, { (x + width) << 16, y << 16 }, { (x + width) << 16, (y + height) << 16 }, { x << 16, (y + height) << 16 } };
+    uint32 rgb     = color & 0xFFFFFF;
+    uint32 cols[4] = { rgb, rgb, rgb, rgb };
+    if (EmitColoredPoly(v, cols, 4, (uint8)(a * 255.0f), sf, df)) {
+        validDraw = true;
+        return true;
+    }
+    return false;
+}
+
+bool RenderDevice::DrawFaceGPU(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect)
+{
+    if (!PBSpriteOffloadOK() || vertCount < 3)
+        return false;
+    if (vertCount > 4)
+        vertCount = 4;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    uint32 rgb     = ((uint32)(r & 0xFF) << 16) | ((uint32)(g & 0xFF) << 8) | (uint32)(b & 0xFF);
+    uint32 cols[4] = { rgb, rgb, rgb, rgb };
+    if (EmitColoredPoly(vertices, cols, vertCount, (uint8)(a * 255.0f), sf, df)) {
+        validDraw = true;
+        return true;
+    }
+    return false;
+}
+
+bool RenderDevice::DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect)
+{
+    if (!PBSpriteOffloadOK() || vertCount < 3)
+        return false;
+    if (vertCount > 4)
+        vertCount = 4;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    if (EmitColoredPoly(vertices, colors, vertCount, (uint8)(a * 255.0f), sf, df)) {
+        validDraw = true;
+        return true;
+    }
+    return false;
+}
+
 // Real paletted-quad path (Stage 2): draw an unscaled sprite as an I8 textured GPU quad
 // instead of the software blit. Returns true = handled on GPU.
 bool RenderDevice::DrawSpriteFlippedGPU(int32 x, int32 y, int32 width, int32 height, int32 sprX, int32 sprY, int32 direction, int32 sheetID,

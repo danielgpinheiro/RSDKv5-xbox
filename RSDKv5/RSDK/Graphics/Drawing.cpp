@@ -1196,6 +1196,12 @@ void RSDK::DrawRectangle(int32 x, int32 y, int32 width, int32 height, uint32 col
     if (width <= 0 || height <= 0)
         return;
 
+#if RETRO_RENDERDEVICE_PBKIT
+    // GPU offload (Tier 1): draw as an untextured colored quad instead of the fill below.
+    if (RenderDevice::DrawRectangleGPU(x, y, width, height, color, alpha, inkEffect))
+        return;
+#endif
+
     int32 pitch         = currentScreen->pitch - width;
     validDraw           = true;
     uint16 *frameBuffer = &currentScreen->frameBuffer[x + (y * currentScreen->pitch)];
@@ -1954,6 +1960,12 @@ void RSDK::DrawFace(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 
             break;
     }
 
+#if RETRO_RENDERDEVICE_PBKIT
+    // GPU offload (Tier 1): draw as an untextured colored poly instead of the scanline fill.
+    if (RenderDevice::DrawFaceGPU(vertices, vertCount, r, g, b, alpha, inkEffect))
+        return;
+#endif
+
     int32 top    = 0x7FFFFFFF;
     int32 bottom = -0x10000;
     for (int32 v = 0; v < vertCount; ++v) {
@@ -2206,6 +2218,12 @@ void RSDK::DrawBlendedFace(Vector2 *vertices, uint32 *colors, int32 vertCount, i
                 return;
             break;
     }
+
+#if RETRO_RENDERDEVICE_PBKIT
+    // GPU offload (Tier 1): draw as an untextured Gouraud colored poly instead of the fill.
+    if (RenderDevice::DrawBlendedFaceGPU(vertices, colors, vertCount, alpha, inkEffect))
+        return;
+#endif
 
     int32 top    = 0x7FFFFFFF;
     int32 bottom = -0x10000;
