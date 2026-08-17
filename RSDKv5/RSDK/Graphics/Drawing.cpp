@@ -3953,6 +3953,13 @@ void RSDK::DrawDeformedSprite(uint16 sheetID, int32 inkEffect, int32 alpha)
             break;
     }
 
+#if RETRO_RENDERDEVICE_PBKIT
+    // GPU offload: per-scanline affine strips (like the Mode-7 floor), sampling the WRAP-tiled
+    // sprite surface. Falls back to software for non-POT surfaces or unsupported ink.
+    if (RenderDevice::DrawDeformedSpriteGPU(sheetID, inkEffect, alpha))
+        return;
+#endif
+
     validDraw              = true;
     GFXSurface *surface    = &gfxSurface[sheetID];
     uint8 *pixels          = surface->pixels;

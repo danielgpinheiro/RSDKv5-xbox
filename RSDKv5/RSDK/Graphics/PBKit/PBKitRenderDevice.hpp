@@ -104,6 +104,8 @@ public:
     static bool DrawLayerGPU(TileLayer *layer);
     // Rotozoom (Mode-7) floor as GPU strip quads (Stage 5). Return true = handled.
     static bool DrawLayerRotozoomGPU(TileLayer *layer);
+    // Deformed sprite (water/heat-haze) as GPU per-scanline strips. Return true = handled.
+    static bool DrawDeformedSpriteGPU(int32 sheetID, int32 inkEffect, int32 alpha);
 
 private:
     static bool SetupRendering();

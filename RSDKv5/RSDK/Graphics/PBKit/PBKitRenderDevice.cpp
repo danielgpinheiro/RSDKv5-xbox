@@ -286,11 +286,12 @@ bool EmitSpriteQuad(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor 
     return EmitSpriteQuadCorners(t, bank, sf, df, a, px, py, u0, v0, u1, v1);
 }
 
-// Textured quad with fully independent per-corner UVs (Mode-7 floor strips) and an explicit
-// texture (not a PBSurfTex). `bankWrap` low 3 bits = palette bank; bit 8 (0x100) = WRAP address.
-// Corner order TL,TR,BL,BR. Vertex color = white * dim.
-bool EmitTexQuadUV(uint8 *texPhys, int32 texW, int32 texH, int32 bankWrap, XguBlendFactor sf, XguBlendFactor df, float dim, const float px[4],
-                   const float py[4], const float cu[4], const float cv[4])
+// Textured quad with fully independent per-corner UVs (Mode-7 floor strips / deformed sprite
+// strips) and an explicit texture (not a PBSurfTex). `bankWrap` low 3 bits = palette bank; bit
+// 8 (0x100) = WRAP address. Corner order TL,TR,BL,BR. Vertex color = white*dim, alpha = alpha8
+// (opaque floor passes 0xFF; deform passes the ink alpha for BLEND/ALPHA/ADD).
+bool EmitTexQuadUV(uint8 *texPhys, int32 texW, int32 texH, int32 bankWrap, XguBlendFactor sf, XguBlendFactor df, float dim, uint8 alpha8,
+                   const float px[4], const float py[4], const float cu[4], const float cv[4])
 {
     if (!sprVerts || sprVertCount + 6 > MAX_SPR_VERTS)
         return false;
@@ -312,7 +313,7 @@ bool EmitTexQuadUV(uint8 *texPhys, int32 texW, int32 texH, int32 bankWrap, XguBl
         v->color[0] = lum;
         v->color[1] = lum;
         v->color[2] = lum;
-        v->color[3] = 0xFF;
+        v->color[3] = alpha8;
         v->tex[0]   = cu[c];
         v->tex[1]   = cv[c];
     }
@@ -707,8 +708,51 @@ bool RotozoomLayerToGPU(TileLayer *layer)
         float py[4] = { cy * sy, cy * sy, (cy + 1) * sy, (cy + 1) * sy };
         float cu[4] = { u0, u1, u0, u1 };
         float cv[4] = { v0, v1, v0, v1 };
-        EmitTexQuadUV(floorTexPhys, floorW, floorH, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, px, py, cu, cv);
+        EmitTexQuadUV(floorTexPhys, floorW, floorH, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, 0xFF, px, py, cu, cv);
     }
+    return true;
+}
+
+// DrawDeformedSprite (water/heat-haze): the same per-scanline affine as the Mode-7 floor, but the
+// texture is a sprite surface (POT, WRAP-tiled — the software path masks with `& (w-1)`/`& (h-1)`).
+// Each scanline is a full-width 1px strip; UV interpolates from position stepped by deform per
+// pixel. Reproduces DrawDeformedSprite's per-pixel walk. Returns false (software fallback) for a
+// non-POT surface or an ink the GPU blend map doesn't cover.
+bool DrawDeformedSpriteToGPU(int32 sheetID, int32 inkEffect, int32 alpha)
+{
+    if (!PBSpriteOffloadOK())
+        return false;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    PBSurfTex *t = GetSurfaceTexture(sheetID);
+    if (!t)
+        return false;
+    if (t->texW != t->w || t->texH != t->h) // non-POT surface -> WRAP would sample padding
+        return false;
+
+    float sx       = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy       = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    int32 clipY1   = currentScreen->clipBound_Y1, clipY2 = currentScreen->clipBound_Y2;
+    int32 w        = currentScreen->size.x; // strip spans the full screen width from x=0
+    float dim      = PBDim();
+    uint8 a8       = (uint8)(a * 255.0f);
+    float invW = 1.0f / (65536.0f * t->texW), invH = 1.0f / (65536.0f * t->texH);
+
+    for (int32 cy = clipY1; cy < clipY2; ++cy) {
+        ScanlineInfo *sl = &scanlines[cy];
+        int32 bank       = gfxLineBuffer[cy] & (PALETTE_BANK_COUNT - 1);
+        float u0 = (float)sl->position.x * invW, v0 = (float)sl->position.y * invH;
+        float u1 = ((float)sl->position.x + (float)w * sl->deform.x) * invW;
+        float v1 = ((float)sl->position.y + (float)w * sl->deform.y) * invH;
+        float px[4] = { 0.0f, w * sx, 0.0f, w * sx };
+        float py[4] = { cy * sy, cy * sy, (cy + 1) * sy, (cy + 1) * sy };
+        float cu[4] = { u0, u1, u0, u1 };
+        float cv[4] = { v0, v1, v0, v1 };
+        EmitTexQuadUV(t->phys, t->texW, t->texH, bank | 0x100, sf, df, dim, a8, px, py, cu, cv);
+    }
+    validDraw = true;
     return true;
 }
 
@@ -1931,6 +1975,8 @@ bool RenderDevice::DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 v
 }
 
 void RenderDevice::UpdateAniTileGPU(int32 tileIndex, int32 cnt) { UpdateAniTileAtlas(tileIndex, cnt); }
+
+bool RenderDevice::DrawDeformedSpriteGPU(int32 sheetID, int32 inkEffect, int32 alpha) { return DrawDeformedSpriteToGPU(sheetID, inkEffect, alpha); }
 
 bool RenderDevice::DrawLayerGPU(RSDK::TileLayer *layer)
 {
