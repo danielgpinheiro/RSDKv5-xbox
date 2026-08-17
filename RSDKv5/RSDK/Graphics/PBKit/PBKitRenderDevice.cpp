@@ -59,6 +59,12 @@ struct PBPresentTex {
 };
 PBPresentTex fbTex;
 
+// FMV / image present (Stage 6): a linear RGB565 texture in a POT container the game's
+// image/video frame is converted into, drawn as one fullscreen quad when screenCount==0.
+uint8 *imgTexData = nullptr, *imgTexPhys = nullptr;
+int32 imgTexW = 0, imgTexH = 0; // POT container
+int32 imgW = 0, imgH = 0;       // actual frame size (top-left of the container)
+
 // Fullscreen present quad, 6 verts (2 triangles). Kept in contiguous memory so the
 // GPU can DMA it (xgux_set_attrib_pointer masks to the AGP offset).
 struct PBVertex {
@@ -543,6 +549,69 @@ bool RotozoomLayerToGPU(TileLayer *layer)
         EmitTexQuadUV(floorTexPhys, floorW, floorH, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, px, py, cu, cv);
     }
     return true;
+}
+
+// Ensure the FMV/image RGB565 texture holds a POT container of at least w x h.
+bool EnsureImageTex(int32 w, int32 h)
+{
+    int32 tw = (int32)npot2pot((uint32)w), th = (int32)npot2pot((uint32)h);
+    if (imgTexData && (imgTexW != tw || imgTexH != th)) {
+        MmFreeContiguousMemory(imgTexData);
+        imgTexData = nullptr;
+    }
+    if (!imgTexData) {
+        imgTexData = (uint8 *)MmAllocateContiguousMemoryEx((SIZE_T)tw * th * 2, 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+        if (!imgTexData)
+            return false;
+        imgTexPhys = (uint8 *)MmGetPhysicalAddress(imgTexData);
+    }
+    imgTexW = tw;
+    imgTexH = th;
+    imgW    = w;
+    imgH    = h;
+    return true;
+}
+
+// YUV planes -> RGB565 into the image texture (BT.601, ported from the SDL3 device).
+// Large videos (Mania.ogv is 1024x512) downsample to <=512 wide (RAM + 4x cheaper).
+void PBConvertYUVToImage(int32 width, int32 height, uint8 *yPlane, uint8 *uPlane, uint8 *vPlane, int32 strideY, int32 strideU, int32 strideV,
+                         int32 chromaShiftX, int32 chromaShiftY)
+{
+    static uint8 clampTable[864];
+    static bool clampReady = false;
+    if (!clampReady) {
+        for (int32 i = 0; i < 864; ++i) {
+            int32 v       = i - 288;
+            clampTable[i] = v < 0 ? 0 : (v > 255 ? 255 : (uint8)v);
+        }
+        clampReady = true;
+    }
+    const uint8 *clamp = &clampTable[288];
+
+    int32 downShift = 0;
+    while ((width >> downShift) > 512) downShift++;
+    const int32 texWidth = width >> downShift, texHeight = height >> downShift;
+    if (!EnsureImageTex(texWidth, texHeight))
+        return;
+
+    int32 pitch16 = imgTexW; // RGB565 texels per row of the POT container
+    for (int32 y = 0; y < texHeight; ++y) {
+        const int32 srcY  = y << downShift;
+        const uint8 *yRow = yPlane + srcY * strideY;
+        const uint8 *uRow = uPlane + (srcY >> chromaShiftY) * strideU;
+        const uint8 *vRow = vPlane + (srcY >> chromaShiftY) * strideV;
+        uint16 *dst       = (uint16 *)imgTexData + y * pitch16;
+        for (int32 x = 0; x < texWidth; ++x) {
+            const int32 srcX = x << downShift;
+            int32 c          = ((int32)yRow[srcX] - 16) * 298;
+            int32 d          = (int32)uRow[srcX >> chromaShiftX] - 128;
+            int32 e          = (int32)vRow[srcX >> chromaShiftX] - 128;
+            uint16 r         = clamp[(c + 409 * e + 128) >> 8];
+            uint16 g         = clamp[(c - 100 * d - 208 * e + 128) >> 8];
+            uint16 b         = clamp[(c + 516 * d + 128) >> 8];
+            dst[x]           = (uint16)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        }
+    }
 }
 
 // Draw the accumulated GPU 2D batches over the presented framebuffer, in draw order
@@ -1070,6 +1139,12 @@ void RenderDevice::Release(bool32 isRefresh)
             floorW = floorH = 0;
             floorKey        = -1;
         }
+        if (imgTexData) {
+            MmFreeContiguousMemory(imgTexData);
+            imgTexData = nullptr;
+            imgTexPhys = nullptr;
+            imgTexW = imgTexH = imgW = imgH = 0;
+        }
         if (displayInfo.displays)
             free(displayInfo.displays);
         displayInfo.displays = nullptr;
@@ -1128,12 +1203,19 @@ void RenderDevice::FlipScreen()
     const float bw = (float)pb_back_buffer_width();
     const float bh = (float)pb_back_buffer_height();
 
+    // Image/FMV mode: when screenCount == 0 the game plays a video/image — present the
+    // RGB565 image texture fullscreen instead of the framebuffer (and skip GPU 2D content).
+    const bool imageMode  = (videoSettings.screenCount == 0 && imgTexData);
+    uint8 *ptxPhys        = imageMode ? imgTexPhys : fbTex.phys;
+    const int32 ptxW      = imageMode ? imgTexW : PB_FB_TEX_W;
+    const int32 ptxH      = imageMode ? imgTexH : PB_FB_TEX_H;
+    const int32 ptxPitch  = imageMode ? (imgTexW * 2) : fbTex.pitch;
+
     // UVs in TEXELS: the NV2A samples LINEAR textures (this RGB565 present texture) with
     // texel coordinates, not normalized [0,1] (swizzled textures use normalized — that's
-    // why the I8 sprite path uses 0..1). The framebuffer occupies the top-left
-    // size.x x size.y texels of the POT container.
-    const float u1 = (float)screens[0].size.x;
-    const float v1 = (float)screens[0].size.y;
+    // why the I8 sprite path uses 0..1). The frame occupies the top-left of the container.
+    const float u1 = imageMode ? (float)imgW : (float)screens[0].size.x;
+    const float v1 = imageMode ? (float)imgH : (float)screens[0].size.y;
 
     // Dimming (fades): modulate the present quad's vertex color.
     float dimAmount = videoSettings.dimMax * videoSettings.dimPercent;
@@ -1170,12 +1252,14 @@ void RenderDevice::FlipScreen()
     texture_combiner_apply();
     p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_SRC_ALPHA);
     p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_ONE_MINUS_SRC_ALPHA);
-    p = xgu_set_texture_offset(p, 0, fbTex.phys);
-    p = xgu_set_texture_format(p, 0, 2, false, XGU_SOURCE_COLOR, 2, XGU_TEXTURE_FORMAT_R5G6B5, 1, __builtin_ctz(PB_FB_TEX_W), __builtin_ctz(PB_FB_TEX_H), 0);
+    p = xgu_set_texture_offset(p, 0, ptxPhys);
+    p = xgu_set_texture_format(p, 0, 2, false, XGU_SOURCE_COLOR, 2, XGU_TEXTURE_FORMAT_R5G6B5, 1, __builtin_ctz(ptxW), __builtin_ctz(ptxH), 0);
     p = xgu_set_texture_control0(p, 0, true, 0, 0);
-    p = xgu_set_texture_control1(p, 0, fbTex.pitch);
-    p = xgu_set_texture_image_rect(p, 0, PB_FB_TEX_W, PB_FB_TEX_H);
-    p = xgu_set_texture_filter(p, 0, 0, XGU_TEXTURE_CONVOLUTION_GAUSSIAN, XGU_TEXTURE_FILTER_NEAREST, XGU_TEXTURE_FILTER_NEAREST, false, false, false, false);
+    p = xgu_set_texture_control1(p, 0, ptxPitch);
+    p = xgu_set_texture_image_rect(p, 0, ptxW, ptxH);
+    // Video scales up — use LINEAR for the image texture, NEAREST for the pixel-art fb.
+    XguTexFilter pf = imageMode ? XGU_TEXTURE_FILTER_LINEAR : XGU_TEXTURE_FILTER_NEAREST;
+    p = xgu_set_texture_filter(p, 0, 0, XGU_TEXTURE_CONVOLUTION_GAUSSIAN, pf, pf, false, false, false, false);
     p = xgu_set_texture_address(p, 0, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, false);
     pb_end(p);
 
@@ -1185,9 +1269,12 @@ void RenderDevice::FlipScreen()
     xgux_draw_arrays(XGU_TRIANGLES, 0, 6);
 
     // Stage 2: sync the 8-bank CLUT from the (possibly cycled) palette, then draw the
-    // accumulated GPU sprite quads over the framebuffer background, in draw order.
-    PBSyncCLUT();
-    FlushSpriteBatches();
+    // accumulated GPU sprite quads over the framebuffer background, in draw order. (Video/
+    // image mode has no GPU 2D content — just present the frame.)
+    if (!imageMode) {
+        PBSyncCLUT();
+        FlushSpriteBatches();
+    }
 
 #ifdef PBKIT_I8_TEST
     I8Test_Draw(); // Stage 0 hardware checkpoint: paletted I8 + animated CLUT overlay
@@ -1326,19 +1413,33 @@ bool RenderDevice::InitShaders()
     return true;
 }
 
-// FMV / image present is ported to pbkit in Stage 6; no-op stubs for now (FMV skips).
-void RenderDevice::SetupImageTexture(int32 width, int32 height, uint8 *imagePixels) { (void)width; (void)height; (void)imagePixels; }
+// FMV / image on pbkit (Stage 6): convert the frame into the RGB565 image texture; it's
+// presented as a fullscreen quad in FlipScreen when screenCount == 0.
+void RenderDevice::SetupImageTexture(int32 width, int32 height, uint8 *imagePixels)
+{
+    if (!EnsureImageTex(width, height) || !imagePixels)
+        return;
+    uint32 *src = (uint32 *)imagePixels; // ARGB8888
+    for (int32 y = 0; y < height; ++y) {
+        uint16 *dst = (uint16 *)imgTexData + y * imgTexW;
+        for (int32 x = 0; x < width; ++x) {
+            uint32 c = src[y * width + x];
+            uint32 r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+            dst[x]   = (uint16)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        }
+    }
+}
 void RenderDevice::SetupVideoTexture_YUV420(int32 width, int32 height, uint8 *yPlane, uint8 *uPlane, uint8 *vPlane, int32 sy, int32 su, int32 sv)
 {
-    (void)width; (void)height; (void)yPlane; (void)uPlane; (void)vPlane; (void)sy; (void)su; (void)sv;
+    PBConvertYUVToImage(width, height, yPlane, uPlane, vPlane, sy, su, sv, 1, 1);
 }
 void RenderDevice::SetupVideoTexture_YUV422(int32 width, int32 height, uint8 *yPlane, uint8 *uPlane, uint8 *vPlane, int32 sy, int32 su, int32 sv)
 {
-    (void)width; (void)height; (void)yPlane; (void)uPlane; (void)vPlane; (void)sy; (void)su; (void)sv;
+    PBConvertYUVToImage(width, height, yPlane, uPlane, vPlane, sy, su, sv, 1, 0);
 }
 void RenderDevice::SetupVideoTexture_YUV444(int32 width, int32 height, uint8 *yPlane, uint8 *uPlane, uint8 *vPlane, int32 sy, int32 su, int32 sv)
 {
-    (void)width; (void)height; (void)yPlane; (void)uPlane; (void)vPlane; (void)sy; (void)su; (void)sv;
+    PBConvertYUVToImage(width, height, yPlane, uPlane, vPlane, sy, su, sv, 0, 0);
 }
 
 // Scene3D solid-face offload (Stage 3): Draw3DScene routes its sorted solid faces here
