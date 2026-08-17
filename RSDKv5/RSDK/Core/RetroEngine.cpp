@@ -138,10 +138,18 @@ int32 RSDK::RunRetroEngine(int32 argc, char *argv[])
             break;
 
 #if RETRO_PLATFORM == RETRO_XBOX
-        // Special stage: present at 30 fps but keep the sim at a true 60 Hz (adaptive
-        // frameskip below). Everywhere else: normal 60 fps, one update per frame.
         bool inSpecial = InSpecialStageScene();
+#ifdef RSDK_USE_PBKIT
+        // PBKit renders the special stage on the GPU, so aim for a full 60 fps present
+        // (not the SDL3 build's 30 fps cap). The adaptive sim clock below still runs so
+        // game speed stays correct if a heavy frame dips the present rate below 60 — the
+        // special stage's 2D background is still software‑rasterized until Stage 4.
+        RenderDevice::SetFPSTarget(videoSettings.refreshRate);
+#else
+        // SDL3 build: the special stage software-rasterizes the 2D — present at 30 fps
+        // but keep the sim at a true 60 Hz (adaptive frameskip below).
         RenderDevice::SetFPSTarget(inSpecial ? 30 : videoSettings.refreshRate);
+#endif
 #endif
 
         if (RenderDevice::CheckFPSCap()) {

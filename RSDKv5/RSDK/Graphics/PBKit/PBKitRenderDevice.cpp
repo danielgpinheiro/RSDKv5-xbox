@@ -28,7 +28,7 @@ extern "C" {
 SDL_Window *RenderDevice::window = nullptr;
 // NOTE: RenderDevice::displayInfo is defined in the shared Drawing.cpp, not here.
 
-bool RenderDevice::gpu3DEnabled = false; // Stage 1: no GPU offload yet (software path)
+bool RenderDevice::gpu3DEnabled = true; // Scene3D face offload (Stage 3)
 
 uint32 RenderDevice::displayModeIndex = 0;
 int32 RenderDevice::displayModeCount  = 0;
@@ -41,6 +41,10 @@ namespace {
 
 // pbkit push-buffer pointer — used by the combiner helpers copied verbatim below.
 uint32_t *p = nullptr;
+
+// Forward declarations (defined further down; used by FlushSpriteBatches above them).
+static inline void texture_combiner_apply(void);
+static inline void unlit_combiner_apply(void);
 
 // The present texture: a POT, linear RGB565 container that the software framebuffer
 // is uploaded into each frame, then drawn as one fullscreen quad. 512x256 fits the
@@ -247,33 +251,98 @@ bool EmitSpriteQuad(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor 
     return EmitSpriteQuadCorners(t, bank, sf, df, a, px, py, u0, v0, u1, v1);
 }
 
-// Draw the accumulated sprite batches over the presented framebuffer (called in FlipScreen).
+// Append an UNTEXTURED colored polygon (fan-triangulated), coalescing with the previous
+// untextured batch of the same blend. Vertices are in 16.16 fixed-point logical pixels
+// (Scene3D face coords); per-vertex RGB from colors[], alpha shared. Same ordered list as
+// sprites, so draw order between faces and sprites is preserved.
+bool EmitColoredPoly(RSDK::Vector2 *vertices, uint32 *colors, int32 vertCount, uint8 alpha8, XguBlendFactor sf, XguBlendFactor df)
+{
+    if (vertCount < 3 || !sprVerts)
+        return false;
+    int32 needed = (vertCount - 2) * 3;
+    if (sprVertCount + needed > MAX_SPR_VERTS)
+        return false;
+    bool coalesce = sprBatchCount > 0 && sprBatches[sprBatchCount - 1].texPhys == nullptr && sprBatches[sprBatchCount - 1].sfactor == sf
+                    && sprBatches[sprBatchCount - 1].dfactor == df
+                    && sprBatches[sprBatchCount - 1].start + sprBatches[sprBatchCount - 1].count == sprVertCount;
+    if (!coalesce && sprBatchCount >= MAX_SPR_BATCHES)
+        return false;
+
+    float sx = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    int32 start = sprVertCount;
+    for (int32 tri = 1; tri + 1 < vertCount; ++tri) {
+        int32 idx[3] = { 0, tri, tri + 1 };
+        for (int32 k = 0; k < 3; ++k) {
+            int32 vi    = idx[k];
+            PBVertex *v = &sprVerts[sprVertCount++];
+            v->pos[0]   = (vertices[vi].x / 65536.0f) * sx;
+            v->pos[1]   = (vertices[vi].y / 65536.0f) * sy;
+            uint32 c    = colors[vi];
+            v->color[0] = (uint8)((c >> 16) & 0xFF);
+            v->color[1] = (uint8)((c >> 8) & 0xFF);
+            v->color[2] = (uint8)(c & 0xFF);
+            v->color[3] = alpha8;
+            v->tex[0]   = 0.0f;
+            v->tex[1]   = 0.0f;
+        }
+    }
+    int32 count = sprVertCount - start;
+    if (coalesce)
+        sprBatches[sprBatchCount - 1].count += count;
+    else
+        sprBatches[sprBatchCount++] = { start, count, nullptr, 0, 0, 0, sf, df };
+    return true;
+}
+
+// Draw the accumulated GPU 2D batches over the presented framebuffer, in draw order
+// (called in FlipScreen). A batch with texPhys != NULL is an I8 paletted sprite; texPhys
+// == NULL is an untextured colored poly (Scene3D faces / 2D primitives).
 void FlushSpriteBatches()
 {
     if (!sprBatchCount)
         return;
+    int32 lastTextured = -1; // -1 = unknown, forces the first combiner set
     for (int32 i = 0; i < sprBatchCount; ++i) {
-        SprBatch *b = &sprBatches[i];
+        SprBatch *b       = &sprBatches[i];
+        int32 isTextured  = b->texPhys != nullptr;
+
         p = pb_begin();
         p = xgu_set_blend_func_sfactor(p, b->sfactor);
         p = xgu_set_blend_func_dfactor(p, b->dfactor);
-        p = xgu_set_texture_offset(p, 0, b->texPhys);
-        p = xgu_set_texture_format(p, 0, 2, false, XGU_SOURCE_COLOR, 2, XGU_TEXTURE_FORMAT_I8_A8R8G8B8_SWIZZLED, 1, __builtin_ctz(b->texW),
-                                   __builtin_ctz(b->texH), 0);
-        p = xgu_set_texture_control0(p, 0, true, 0, 0);
-        p = xgu_set_texture_control1(p, 0, b->texW);
-        p = xgu_set_texture_image_rect(p, 0, b->texW, b->texH);
-        // Select the palette bank: byte offset bank*256*4 into the CLUT, passed >>6.
-        p = xgu_set_texture_palette(p, 0, true, XGU_PALETTE_LENGTH_256, (void *)(((uint32_t)pbClutPhys + (uint32_t)b->bank * 256u * 4u) >> 6));
-        p = xgu_set_texture_filter(p, 0, 0, XGU_TEXTURE_CONVOLUTION_GAUSSIAN, XGU_TEXTURE_FILTER_NEAREST, XGU_TEXTURE_FILTER_NEAREST, false, false,
-                                   false, false);
-        p = xgu_set_texture_address(p, 0, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, false);
+        if (isTextured != lastTextured) {
+            if (isTextured)
+                texture_combiner_apply();
+            else
+                unlit_combiner_apply();
+            lastTextured = isTextured;
+        }
+        if (isTextured) {
+            p = xgu_set_texture_offset(p, 0, b->texPhys);
+            p = xgu_set_texture_format(p, 0, 2, false, XGU_SOURCE_COLOR, 2, XGU_TEXTURE_FORMAT_I8_A8R8G8B8_SWIZZLED, 1, __builtin_ctz(b->texW),
+                                       __builtin_ctz(b->texH), 0);
+            p = xgu_set_texture_control0(p, 0, true, 0, 0);
+            p = xgu_set_texture_control1(p, 0, b->texW);
+            p = xgu_set_texture_image_rect(p, 0, b->texW, b->texH);
+            // Select the palette bank: byte offset bank*256*4 into the CLUT, passed >>6.
+            p = xgu_set_texture_palette(p, 0, true, XGU_PALETTE_LENGTH_256, (void *)(((uint32_t)pbClutPhys + (uint32_t)b->bank * 256u * 4u) >> 6));
+            p = xgu_set_texture_filter(p, 0, 0, XGU_TEXTURE_CONVOLUTION_GAUSSIAN, XGU_TEXTURE_FILTER_NEAREST, XGU_TEXTURE_FILTER_NEAREST, false, false,
+                                       false, false);
+            p = xgu_set_texture_address(p, 0, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, false);
+        }
         pb_end(p);
 
         xgux_set_attrib_pointer(XGU_VERTEX_ARRAY, XGU_FLOAT, 2, sizeof(PBVertex), sprVerts[b->start].pos);
         xgux_set_attrib_pointer(XGU_COLOR_ARRAY, XGU_UNSIGNED_BYTE_OGL, 4, sizeof(PBVertex), sprVerts[b->start].color);
-        xgux_set_attrib_pointer(XGU_TEXCOORD0_ARRAY, XGU_FLOAT, 2, sizeof(PBVertex), sprVerts[b->start].tex);
+        if (isTextured)
+            xgux_set_attrib_pointer(XGU_TEXCOORD0_ARRAY, XGU_FLOAT, 2, sizeof(PBVertex), sprVerts[b->start].tex);
         xgux_draw_arrays(XGU_TRIANGLES, 0, b->count);
+    }
+    // Restore the texture combiner for next frame's framebuffer present quad.
+    if (lastTextured == 0) {
+        p = pb_begin();
+        texture_combiner_apply();
+        pb_end(p);
     }
 }
 
@@ -367,6 +436,26 @@ static inline void texture_combiner_apply(void)
     p = pb_push1(p, NV097_SET_COMBINER_ALPHA_ICW + 0 * 4,
         XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_A_SOURCE, 0x8) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_A_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_A_MAP, 0x6)
         | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_B_SOURCE, 0x4) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_B_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_B_MAP, 0x6)
+        | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_C_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_C_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_C_MAP, 0x0)
+        | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_MAP, 0x0));
+}
+
+// Untextured: output = diffuse (vertex color). Used for colored polys (Scene3D faces,
+// 2D primitives).
+static inline void unlit_combiner_apply(void)
+{
+    p = pb_push1(p, NV097_SET_SHADER_OTHER_STAGE_INPUT, 0);
+    p = pb_push1(p, NV097_SET_SHADER_STAGE_PROGRAM, 0);
+
+    p = pb_push1(p, NV097_SET_COMBINER_COLOR_ICW + 0 * 4,
+        XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_A_SOURCE, 0x4) | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_A_ALPHA, 0) | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_A_MAP, 0x6)
+        | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_B_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_B_ALPHA, 0) | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_B_MAP, 0x1)
+        | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_C_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_C_ALPHA, 0) | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_C_MAP, 0x0)
+        | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_D_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_D_ALPHA, 0) | XGU_MASK(NV097_SET_COMBINER_COLOR_ICW_D_MAP, 0x0));
+
+    p = pb_push1(p, NV097_SET_COMBINER_ALPHA_ICW + 0 * 4,
+        XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_A_SOURCE, 0x4) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_A_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_A_MAP, 0x6)
+        | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_B_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_B_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_B_MAP, 0x1)
         | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_C_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_C_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_C_MAP, 0x0)
         | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_MAP, 0x0));
 }
@@ -973,16 +1062,49 @@ void RenderDevice::SetupVideoTexture_YUV444(int32 width, int32 height, uint8 *yP
     (void)width; (void)height; (void)yPlane; (void)uPlane; (void)vPlane; (void)sy; (void)su; (void)sv;
 }
 
-// GPU offload: Stage 1 forces the software rasterizer everywhere (implemented in
-// Stage 2/3). Keeps the special-stage hooks in Drawing.cpp / Scene3D.cpp compiling.
-bool RenderDevice::Use3DOffload() { return false; }
+// Scene3D solid-face offload (Stage 3): Draw3DScene routes its sorted solid faces here
+// (via the EMIT_FACE / EMIT_BLENDED macros) when Use3DOffload() is true; they become
+// untextured GPU polys in the same ordered list as sprites, composited over the fb.
+// Gameplay-only (same gate as sprites) — Add3DFace is only called from Draw3DScene anyway.
+bool RenderDevice::Use3DOffload()
+{
+    return gpu3DEnabled && sprVerts && videoSettings.screenCount == 1 && sceneInfo.state == ENGINESTATE_REGULAR;
+}
+
+// Ink -> blend for faces; unsupported inks fall back to opaque (rather than dropping).
+static inline void FaceInkToBlend(int32 inkEffect, int32 alpha, XguBlendFactor *sf, XguBlendFactor *df, float *a)
+{
+    if (!SprInkToBlend(inkEffect, alpha, sf, df, a)) {
+        *sf = XGU_FACTOR_SRC_ALPHA;
+        *df = XGU_FACTOR_ONE_MINUS_SRC_ALPHA;
+        *a  = 1.0f;
+    }
+}
+
 void RenderDevice::Add3DFace(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect)
 {
-    (void)vertices; (void)vertCount; (void)r; (void)g; (void)b; (void)alpha; (void)inkEffect;
+    if (vertCount < 3 || !sprVerts)
+        return;
+    if (vertCount > 4)
+        vertCount = 4;
+    uint32 rgb       = ((uint32)(r & 0xFF) << 16) | ((uint32)(g & 0xFF) << 8) | (uint32)(b & 0xFF);
+    uint32 colors[4] = { rgb, rgb, rgb, rgb };
+    XguBlendFactor sf, df;
+    float a;
+    FaceInkToBlend(inkEffect, alpha, &sf, &df, &a);
+    EmitColoredPoly(vertices, colors, vertCount, (uint8)(a * 255.0f), sf, df);
 }
+
 void RenderDevice::Add3DBlendedFace(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect)
 {
-    (void)vertices; (void)colors; (void)vertCount; (void)alpha; (void)inkEffect;
+    if (vertCount < 3 || !sprVerts)
+        return;
+    if (vertCount > 4)
+        vertCount = 4;
+    XguBlendFactor sf, df;
+    float a;
+    FaceInkToBlend(inkEffect, alpha, &sf, &df, &a);
+    EmitColoredPoly(vertices, colors, vertCount, (uint8)(a * 255.0f), sf, df);
 }
 // Rotozoom / scaled sprites (Stage 2): DrawSpriteRotozoom hands us the 4 transformed
 // corners (rotation + scale + flip already applied); draw them as an I8 textured GPU
@@ -1040,8 +1162,11 @@ bool RenderDevice::DrawSpriteGPU(int32 *posX, int32 *posY, int32 sprX, int32 spr
         px[i]    = w0 * cx[0] + w1 * cx[1] + w2 * cx[2] + w3 * cx[3];
         py[i]    = w0 * cy[0] + w1 * cy[1] + w2 * cy[2] + w3 * cy[3];
     }
-    float u0 = (float)sprX / (float)t->texW, u1 = (float)(sprX + width) / (float)t->texW;
-    float v0 = (float)sprY / (float)t->texH, v1 = (float)(sprY + height) / (float)t->texH;
+    // Half-texel inset: at heavy minification (far billboards) the edge UVs land on the
+    // frame boundary and NEAREST bleeds the adjacent sheet frame -> a thin border. Keep
+    // the edge samples strictly inside this frame.
+    float u0 = (float)(sprX + 0.5f) / (float)t->texW, u1 = (float)(sprX + width - 0.5f) / (float)t->texW;
+    float v0 = (float)(sprY + 0.5f) / (float)t->texH, v1 = (float)(sprY + height - 0.5f) / (float)t->texH;
     if (EmitSpriteQuadCorners(t, bank, sf, df, a, px, py, u0, v0, u1, v1)) {
         validDraw = true;
         return true;
