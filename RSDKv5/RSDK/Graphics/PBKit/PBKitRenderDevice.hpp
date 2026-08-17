@@ -91,6 +91,11 @@ public:
     static bool DrawRectangleGPU(int32 x, int32 y, int32 width, int32 height, uint32 color, int32 alpha, int32 inkEffect);
     // Fullscreen per-channel alpha fade (Mania zone transition; Zone.c FillScreen). Handled = true.
     static bool DrawFillScreenGPU(uint32 color, int32 alphaR, int32 alphaG, int32 alphaB);
+    // Line (thin quad) + filled circle (fan) + circle outline (ring). Endpoints/center are
+    // already in screen pixels. Return true = handled (else software fallback).
+    static bool DrawLineGPU(int32 x1, int32 y1, int32 x2, int32 y2, uint32 color, int32 alpha, int32 inkEffect);
+    static bool DrawCircleGPU(int32 x, int32 y, int32 radius, uint32 color, int32 alpha, int32 inkEffect);
+    static bool DrawCircleOutlineGPU(int32 x, int32 y, int32 innerRadius, int32 outerRadius, uint32 color, int32 alpha, int32 inkEffect);
     static bool DrawFaceGPU(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect);
     static bool DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect);
     // Re-upload animated tiles (DrawAniTile) into the GPU tileset atlas so they animate.

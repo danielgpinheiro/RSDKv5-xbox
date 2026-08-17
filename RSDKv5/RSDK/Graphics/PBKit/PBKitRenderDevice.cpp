@@ -1795,6 +1795,105 @@ bool RenderDevice::DrawFillScreenGPU(uint32 color, int32 alphaR, int32 alphaG, i
     return true;
 }
 
+// DrawLine: a 1px-logical line as a thin quad between the (already screen-space) endpoints.
+bool RenderDevice::DrawLineGPU(int32 x1, int32 y1, int32 x2, int32 y2, uint32 color, int32 alpha, int32 inkEffect)
+{
+    if (!PBSpriteOffloadOK())
+        return false;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    float dx = (float)(x2 - x1), dy = (float)(y2 - y1);
+    float len = __builtin_sqrtf(dx * dx + dy * dy);
+    if (len < 0.001f) { // degenerate (a point) — a 1px dot
+        dx  = 1.0f;
+        dy  = 0.0f;
+        len = 1.0f;
+    }
+    float nx = -dy / len * 0.5f, ny = dx / len * 0.5f; // 0.5px perpendicular half-width
+    Vector2 v[4]   = { { (int32)((x1 + nx) * 65536.0f), (int32)((y1 + ny) * 65536.0f) },
+                       { (int32)((x2 + nx) * 65536.0f), (int32)((y2 + ny) * 65536.0f) },
+                       { (int32)((x2 - nx) * 65536.0f), (int32)((y2 - ny) * 65536.0f) },
+                       { (int32)((x1 - nx) * 65536.0f), (int32)((y1 - ny) * 65536.0f) } };
+    uint32 rgb     = color & 0xFFFFFF;
+    uint32 cols[4] = { rgb, rgb, rgb, rgb };
+    if (EmitColoredPoly(v, cols, 4, (uint8)(a * 255.0f), sf, df)) {
+        validDraw = true;
+        return true;
+    }
+    return false;
+}
+
+// DrawCircle: filled circle as a triangle fan (center + perimeter). Perimeter points from the
+// engine's Sin256/Cos256 tables (scale >>8); segment count scales with radius.
+bool RenderDevice::DrawCircleGPU(int32 x, int32 y, int32 radius, uint32 color, int32 alpha, int32 inkEffect)
+{
+    if (!PBSpriteOffloadOK() || radius <= 0)
+        return false;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    int32 N = radius >> 1;
+    N       = N < 12 ? 12 : (N > 64 ? 64 : N);
+    Vector2 v[66];
+    uint32 cols[66];
+    uint32 rgb = color & 0xFFFFFF;
+    v[0].x     = x << 16;
+    v[0].y     = y << 16;
+    cols[0]    = rgb;
+    for (int32 i = 0; i <= N; ++i) {
+        int32 ang  = (i * 256) / N;
+        v[i + 1].x = (x + (Cos256(ang) * radius >> 8)) << 16;
+        v[i + 1].y = (y + (Sin256(ang) * radius >> 8)) << 16;
+        cols[i + 1] = rgb;
+    }
+    if (EmitColoredPoly(v, cols, N + 2, (uint8)(a * 255.0f), sf, df)) {
+        validDraw = true;
+        return true;
+    }
+    return false;
+}
+
+// DrawCircleOutline: an annulus (ring) as a strip of quads between inner and outer radius.
+bool RenderDevice::DrawCircleOutlineGPU(int32 x, int32 y, int32 innerRadius, int32 outerRadius, uint32 color, int32 alpha, int32 inkEffect)
+{
+    if (!PBSpriteOffloadOK() || outerRadius <= 0 || innerRadius >= outerRadius)
+        return false;
+    XguBlendFactor sf, df;
+    float a;
+    if (!SprInkToBlend(inkEffect, alpha, &sf, &df, &a))
+        return false;
+    if (innerRadius < 0)
+        innerRadius = 0;
+    int32 N = outerRadius >> 1;
+    N       = N < 12 ? 12 : (N > 64 ? 64 : N);
+    uint32 rgb = color & 0xFFFFFF;
+    uint8 a8   = (uint8)(a * 255.0f);
+    int32 pox = x + (Cos256(0) * outerRadius >> 8), poy = y + (Sin256(0) * outerRadius >> 8);
+    int32 pix = x + (Cos256(0) * innerRadius >> 8), piy = y + (Sin256(0) * innerRadius >> 8);
+    bool any = false;
+    for (int32 i = 1; i <= N; ++i) {
+        int32 ang = (i * 256) / N;
+        int32 nox = x + (Cos256(ang) * outerRadius >> 8), noy = y + (Sin256(ang) * outerRadius >> 8);
+        int32 nix = x + (Cos256(ang) * innerRadius >> 8), niy = y + (Sin256(ang) * innerRadius >> 8);
+        Vector2 v[4]   = { { pox << 16, poy << 16 }, { nox << 16, noy << 16 }, { nix << 16, niy << 16 }, { pix << 16, piy << 16 } };
+        uint32 cols[4] = { rgb, rgb, rgb, rgb };
+        if (EmitColoredPoly(v, cols, 4, a8, sf, df))
+            any = true;
+        pox = nox;
+        poy = noy;
+        pix = nix;
+        piy = niy;
+    }
+    if (any) {
+        validDraw = true;
+        return true;
+    }
+    return false;
+}
+
 bool RenderDevice::DrawFaceGPU(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect)
 {
     if (!PBSpriteOffloadOK() || vertCount < 3)

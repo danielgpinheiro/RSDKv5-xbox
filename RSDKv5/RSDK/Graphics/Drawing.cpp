@@ -663,6 +663,13 @@ void RSDK::DrawLine(int32 x1, int32 y1, int32 x2, int32 y2, uint32 color, int32 
         drawY2 = FROM_FIXED(y2) - currentScreen->position.y;
     }
 
+#if RETRO_RENDERDEVICE_PBKIT
+    // GPU offload: draw as a thin quad in the batch stream (the software path below clips +
+    // rasterizes into the framebuffer, which is under the GPU content).
+    if (RenderDevice::DrawLineGPU(drawX1, drawY1, drawX2, drawY2, color, alpha, inkEffect))
+        return;
+#endif
+
     int32 flags1 = 0;
     if (drawX1 >= currentScreen->clipBound_X2)
         flags1 = 2;
@@ -1361,6 +1368,11 @@ void RSDK::DrawCircle(int32 x, int32 y, int32 radius, uint32 color, int32 alpha,
             y = FROM_FIXED(y) - currentScreen->position.y;
         }
 
+#if RETRO_RENDERDEVICE_PBKIT
+        if (RenderDevice::DrawCircleGPU(x, y, radius, color, alpha, inkEffect))
+            return;
+#endif
+
         int32 yRadiusBottom = y + radius;
         int32 bottom        = yRadiusBottom + 1;
         int32 yRadiusTop    = y - radius;
@@ -1693,6 +1705,11 @@ void RSDK::DrawCircleOutline(int32 x, int32 y, int32 innerRadius, int32 outerRad
         x = FROM_FIXED(x) - currentScreen->position.x;
         y = FROM_FIXED(y) - currentScreen->position.y;
     }
+
+#if RETRO_RENDERDEVICE_PBKIT
+    if (RenderDevice::DrawCircleOutlineGPU(x, y, innerRadius, outerRadius, color, alpha, inkEffect))
+        return;
+#endif
 
     if (outerRadius > 0 && innerRadius < outerRadius) {
         int32 top    = y - outerRadius;
