@@ -1312,6 +1312,12 @@ void RSDK::DrawLayerHScroll(TileLayer *layer)
     if (!layer->xsize || !layer->ysize)
         return;
 
+#if RETRO_RENDERDEVICE_PBKIT
+    // GPU offload (Tier 1): draw the tile layer as GPU quads instead of the scanline fill.
+    if (RenderDevice::DrawLayerGPU(layer))
+        return;
+#endif
+
     int32 lineTileCount    = (currentScreen->pitch >> 4) - 1;
     uint8 *lineBuffer      = &gfxLineBuffer[currentScreen->clipBound_Y1];
     ScanlineInfo *scanline = &scanlines[currentScreen->clipBound_Y1];

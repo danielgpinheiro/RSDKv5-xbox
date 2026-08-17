@@ -168,8 +168,8 @@ PBSurfTex *GetSurfaceTexture(int32 sheetID)
 }
 
 // --- sprite quad batches -----------------------------------------------------
-#define MAX_SPR_VERTS   (12288) // 2048 quads
-#define MAX_SPR_BATCHES (1024)
+#define MAX_SPR_VERTS   (49152) // 8192 quads — tile layers push far more geometry than sprites
+#define MAX_SPR_BATCHES (4096)
 PBVertex *sprVerts = nullptr;
 int32 sprVertCount = 0;
 struct SprBatch {
@@ -178,9 +178,23 @@ struct SprBatch {
     int32 texW, texH;
     int32 bank;
     XguBlendFactor sfactor, dfactor;
+    // Scissor in back-buffer pixels (tile-layer strips clip to their scanline band). A
+    // full-screen clip means "no clip"; -1 width = unset (use full screen).
+    int32 clipX, clipY, clipW, clipH;
 };
 SprBatch sprBatches[MAX_SPR_BATCHES];
 int32 sprBatchCount = 0;
+// Current clip applied to newly-emitted batches (back-buffer px; clipW<0 = full screen).
+int32 curClipX = 0, curClipY = 0, curClipW = -1, curClipH = -1;
+inline bool BatchClipMatches(const SprBatch &b) { return b.clipX == curClipX && b.clipY == curClipY && b.clipW == curClipW && b.clipH == curClipH; }
+
+// Dimming (fades / pause): the framebuffer present quad already modulates by this; GPU
+// sprites/tiles/polys must too, or they stay bright while the fb darkens. 0..1.
+inline float PBDim()
+{
+    float d = videoSettings.dimMax * videoSettings.dimPercent;
+    return d > 1.0f ? 1.0f : (d < 0.0f ? 0.0f : d);
+}
 
 // Only offload sprites during live gameplay. GPU sprites composite over the software
 // framebuffer (drawn last, on top), which breaks the interleaved draw order of overlay
@@ -190,6 +204,14 @@ int32 sprBatchCount = 0;
 inline bool PBSpriteOffloadOK()
 {
     return sprVerts && pbClut && videoSettings.screenCount == 1 && sceneInfo.state == ENGINESTATE_REGULAR;
+}
+
+// Is the current scene a special stage? Its layers use effects our GPU tile path doesn't
+// model (the background garbles); keep them on the software path until Stage 5 (Mode-7).
+inline bool PBInSpecialStage()
+{
+    return sceneInfo.listCategory && sceneInfo.listCategory[sceneInfo.activeCategory].name
+           && strstr(sceneInfo.listCategory[sceneInfo.activeCategory].name, "Special");
 }
 
 // Map an ink effect to a GPU blend + vertex alpha. false = unsupported (software path).
@@ -214,11 +236,13 @@ bool EmitSpriteQuadCorners(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlend
         return false;
     bool coalesce = sprBatchCount > 0 && sprBatches[sprBatchCount - 1].texPhys == t->phys && sprBatches[sprBatchCount - 1].bank == bank
                     && sprBatches[sprBatchCount - 1].sfactor == sf && sprBatches[sprBatchCount - 1].dfactor == df
+                    && BatchClipMatches(sprBatches[sprBatchCount - 1])
                     && sprBatches[sprBatchCount - 1].start + sprBatches[sprBatchCount - 1].count == sprVertCount;
     if (!coalesce && sprBatchCount >= MAX_SPR_BATCHES)
         return false;
 
     uint8 alpha8 = (uint8)(a * 255.0f);
+    uint8 lum    = (uint8)(255.0f * PBDim()); // fade/dim modulation (tex * this)
     const float tu[4] = { u0, u1, u0, u1 };
     const float tv[4] = { v0, v0, v1, v1 };
     const int32 order[6] = { 0, 1, 2, 1, 3, 2 };
@@ -228,9 +252,9 @@ bool EmitSpriteQuadCorners(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlend
         PBVertex *v          = &sprVerts[sprVertCount++];
         v->pos[0]            = px[c];
         v->pos[1]            = py[c];
-        v->color[0]          = 0xFF;
-        v->color[1]          = 0xFF;
-        v->color[2]          = 0xFF;
+        v->color[0]          = lum;
+        v->color[1]          = lum;
+        v->color[2]          = lum;
         v->color[3]          = alpha8;
         v->tex[0]            = tu[c];
         v->tex[1]            = tv[c];
@@ -238,7 +262,7 @@ bool EmitSpriteQuadCorners(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlend
     if (coalesce)
         sprBatches[sprBatchCount - 1].count += 6;
     else
-        sprBatches[sprBatchCount++] = { start, 6, t->phys, t->texW, t->texH, bank, sf, df };
+        sprBatches[sprBatchCount++] = { start, 6, t->phys, t->texW, t->texH, bank, sf, df, curClipX, curClipY, curClipW, curClipH };
     return true;
 }
 
@@ -263,13 +287,14 @@ bool EmitColoredPoly(RSDK::Vector2 *vertices, uint32 *colors, int32 vertCount, u
     if (sprVertCount + needed > MAX_SPR_VERTS)
         return false;
     bool coalesce = sprBatchCount > 0 && sprBatches[sprBatchCount - 1].texPhys == nullptr && sprBatches[sprBatchCount - 1].sfactor == sf
-                    && sprBatches[sprBatchCount - 1].dfactor == df
+                    && sprBatches[sprBatchCount - 1].dfactor == df && BatchClipMatches(sprBatches[sprBatchCount - 1])
                     && sprBatches[sprBatchCount - 1].start + sprBatches[sprBatchCount - 1].count == sprVertCount;
     if (!coalesce && sprBatchCount >= MAX_SPR_BATCHES)
         return false;
 
     float sx = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
     float sy = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    float dim   = PBDim(); // fade/dim modulation
     int32 start = sprVertCount;
     for (int32 tri = 1; tri + 1 < vertCount; ++tri) {
         int32 idx[3] = { 0, tri, tri + 1 };
@@ -279,9 +304,9 @@ bool EmitColoredPoly(RSDK::Vector2 *vertices, uint32 *colors, int32 vertCount, u
             v->pos[0]   = (vertices[vi].x / 65536.0f) * sx;
             v->pos[1]   = (vertices[vi].y / 65536.0f) * sy;
             uint32 c    = colors[vi];
-            v->color[0] = (uint8)((c >> 16) & 0xFF);
-            v->color[1] = (uint8)((c >> 8) & 0xFF);
-            v->color[2] = (uint8)(c & 0xFF);
+            v->color[0] = (uint8)(((c >> 16) & 0xFF) * dim);
+            v->color[1] = (uint8)(((c >> 8) & 0xFF) * dim);
+            v->color[2] = (uint8)((c & 0xFF) * dim);
             v->color[3] = alpha8;
             v->tex[0]   = 0.0f;
             v->tex[1]   = 0.0f;
@@ -291,7 +316,117 @@ bool EmitColoredPoly(RSDK::Vector2 *vertices, uint32 *colors, int32 vertCount, u
     if (coalesce)
         sprBatches[sprBatchCount - 1].count += count;
     else
-        sprBatches[sprBatchCount++] = { start, count, nullptr, 0, 0, 0, sf, df };
+        sprBatches[sprBatchCount++] = { start, count, nullptr, 0, 0, 0, sf, df, curClipX, curClipY, curClipW, curClipH };
+    return true;
+}
+
+// --- tileset atlas + tile layers (Stage 4) -----------------------------------
+// tilesetPixels is tile-major (each tile = 256 contiguous bytes = 16 rows of 16) with 4
+// pre-flipped copies; a layout entry's low 12 bits index directly into that 0..4095 space.
+// Re-arrange into one 1024x1024 I8 atlas (64x64 tiles) so tiles draw as GPU quads, rebuilt
+// on scene change. (Animated tiles / DrawAniTile are not yet re-uploaded — deferred.)
+#define TILE_ATLAS_DIM  (1024)
+#define TILE_ATLAS_COLS (64)
+uint8 *tileAtlasData = nullptr, *tileAtlasPhys = nullptr;
+int32 tileAtlasSceneKey = -1;
+
+void BuildTilesetAtlas()
+{
+    if (!tileAtlasData) {
+        tileAtlasData =
+            (uint8 *)MmAllocateContiguousMemoryEx((SIZE_T)TILE_ATLAS_DIM * TILE_ATLAS_DIM, 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+        if (!tileAtlasData)
+            return;
+        tileAtlasPhys = (uint8 *)MmGetPhysicalAddress(tileAtlasData);
+    }
+    uint8 *tmp = (uint8 *)malloc((size_t)TILE_ATLAS_DIM * TILE_ATLAS_DIM);
+    if (!tmp)
+        return;
+    for (int32 idx = 0; idx < TILE_ATLAS_COLS * TILE_ATLAS_COLS; ++idx) {
+        int32 gx   = (idx % TILE_ATLAS_COLS) * TILE_SIZE;
+        int32 gy   = (idx / TILE_ATLAS_COLS) * TILE_SIZE;
+        uint8 *src = &tilesetPixels[idx * TILE_DATASIZE];
+        for (int32 row = 0; row < TILE_SIZE; ++row) memcpy(&tmp[(gy + row) * TILE_ATLAS_DIM + gx], &src[row * TILE_SIZE], TILE_SIZE);
+    }
+    swizzle_rect(tmp, TILE_ATLAS_DIM, TILE_ATLAS_DIM, tileAtlasData, TILE_ATLAS_DIM, 1);
+    free(tmp);
+}
+
+// One HScroll tile layer as GPU quads. Screen scanlines are grouped into constant-X bands
+// (parallax); each band's visible tiles draw clipped (scissor) to its screen-Y range. Many
+// bands (per-scanline deform / water) -> bail to software.
+bool DrawLayerHScrollGPU(TileLayer *layer)
+{
+    if (!layer->xsize || !layer->ysize)
+        return true;
+    if (!tileAtlasData)
+        return false;
+
+    int32 clipY1 = currentScreen->clipBound_Y1, clipY2 = currentScreen->clipBound_Y2;
+    int32 clipX2 = currentScreen->clipBound_X2;
+
+    // Pre-scan: count constant-X bands; too many means per-scanline deform -> software.
+    int32 bands = 1;
+    for (int32 y = clipY1 + 1; y < clipY2; ++y)
+        if (scanlines[y].position.x != scanlines[y - 1].position.x)
+            ++bands;
+    if (bands > 48)
+        return false;
+
+    PBSurfTex atlas;
+    atlas.phys = tileAtlasPhys;
+    atlas.texW = TILE_ATLAS_DIM;
+    atlas.texH = TILE_ATLAS_DIM;
+
+    float sx          = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy          = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    int32 pixelWidth  = TILE_SIZE * layer->xsize;
+    const float hu    = 0.5f / TILE_ATLAS_DIM; // half-texel inset (avoid atlas bleed)
+
+    int32 cy = clipY1;
+    while (cy < clipY2) {
+        int32 bandX16 = scanlines[cy].position.x;
+        int32 cy0     = cy;
+        while (cy < clipY2 && scanlines[cy].position.x == bandX16) ++cy;
+        int32 cy1 = cy;
+
+        curClipX = 0;
+        curClipY = (int32)(cy0 * sy);
+        curClipW = pb_back_buffer_width();
+        curClipH = (int32)((cy1 - cy0) * sy);
+
+        int32 srcX = FROM_FIXED(bandX16) % pixelWidth;
+        if (srcX < 0)
+            srcX += pixelWidth;
+        int32 srcY = FROM_FIXED(scanlines[cy0].position.y);
+        int32 subX = srcX & 0xF, subY = srcY & 0xF;
+        int32 tx0 = srcX >> 4, ty0 = srcY >> 4;
+
+        int32 rowTopY = cy0 - subY;
+        for (int32 screenY = rowTopY; screenY < cy1; screenY += TILE_SIZE) {
+            int32 ty = (ty0 + (screenY - rowTopY) / TILE_SIZE) % layer->ysize;
+            if (ty < 0)
+                ty += layer->ysize;
+            int32 colTx = tx0;
+            for (int32 screenX = -subX; screenX < clipX2; screenX += TILE_SIZE) {
+                int32 tx = colTx++ % layer->xsize;
+                if (tx < 0)
+                    tx += layer->xsize;
+                uint16 entry = layer->layout[tx + (ty << layer->widthShift)];
+                if (entry < 0xFFFF) {
+                    int32 idx  = entry & 0xFFF;
+                    int32 gx   = (idx % TILE_ATLAS_COLS) * TILE_SIZE, gy = (idx / TILE_ATLAS_COLS) * TILE_SIZE;
+                    float u0   = (float)gx / TILE_ATLAS_DIM + hu, u1 = (float)(gx + TILE_SIZE) / TILE_ATLAS_DIM - hu;
+                    float v0   = (float)gy / TILE_ATLAS_DIM + hu, v1 = (float)(gy + TILE_SIZE) / TILE_ATLAS_DIM - hu;
+                    int32 py   = screenY < 0 ? 0 : (screenY >= SCREEN_YSIZE ? SCREEN_YSIZE - 1 : screenY);
+                    int32 bank = gfxLineBuffer[py] & (PALETTE_BANK_COUNT - 1);
+                    EmitSpriteQuad(&atlas, bank, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, 1.0f, screenX * sx, screenY * sy,
+                                   (screenX + TILE_SIZE) * sx, (screenY + TILE_SIZE) * sy, u0, v0, u1, v1);
+                }
+            }
+        }
+    }
+    curClipW = -1; // reset to full screen for subsequent batches
     return true;
 }
 
@@ -303,9 +438,21 @@ void FlushSpriteBatches()
     if (!sprBatchCount)
         return;
     int32 lastTextured = -1; // -1 = unknown, forces the first combiner set
+    int32 bw = pb_back_buffer_width(), bh = pb_back_buffer_height();
+    int32 lcX = -2, lcY = -2, lcW = -2, lcH = -2; // last-applied scissor (forces first set)
     for (int32 i = 0; i < sprBatchCount; ++i) {
         SprBatch *b       = &sprBatches[i];
         int32 isTextured  = b->texPhys != nullptr;
+
+        // Per-batch scissor (tile-layer strips clip to their band; clipW<0 = full screen).
+        if (b->clipX != lcX || b->clipY != lcY || b->clipW != lcW || b->clipH != lcH) {
+            int32 sx = b->clipW < 0 ? 0 : b->clipX, sy = b->clipW < 0 ? 0 : b->clipY;
+            int32 sw = b->clipW < 0 ? bw : b->clipW, sh = b->clipW < 0 ? bh : b->clipH;
+            p = pb_begin();
+            p = xgu_set_scissor_rect(p, false, sx, sy, sw, sh);
+            pb_end(p);
+            lcX = b->clipX; lcY = b->clipY; lcW = b->clipW; lcH = b->clipH;
+        }
 
         p = pb_begin();
         p = xgu_set_blend_func_sfactor(p, b->sfactor);
@@ -338,12 +485,12 @@ void FlushSpriteBatches()
             xgux_set_attrib_pointer(XGU_TEXCOORD0_ARRAY, XGU_FLOAT, 2, sizeof(PBVertex), sprVerts[b->start].tex);
         xgux_draw_arrays(XGU_TRIANGLES, 0, b->count);
     }
-    // Restore the texture combiner for next frame's framebuffer present quad.
-    if (lastTextured == 0) {
-        p = pb_begin();
+    // Restore full-screen scissor + the texture combiner for the next framebuffer present.
+    p = pb_begin();
+    p = xgu_set_scissor_rect(p, false, 0, 0, bw, bh);
+    if (lastTextured == 0)
         texture_combiner_apply();
-        pb_end(p);
-    }
+    pb_end(p);
 }
 
 
@@ -791,6 +938,12 @@ void RenderDevice::Release(bool32 isRefresh)
                 pbSurfTex[i].builtFrom = nullptr;
             }
         }
+        if (tileAtlasData) {
+            MmFreeContiguousMemory(tileAtlasData);
+            tileAtlasData     = nullptr;
+            tileAtlasPhys     = nullptr;
+            tileAtlasSceneKey = -1;
+        }
         if (displayInfo.displays)
             free(displayInfo.displays);
         displayInfo.displays = nullptr;
@@ -1229,6 +1382,30 @@ bool RenderDevice::DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 v
         return true;
     }
     return false;
+}
+
+bool RenderDevice::DrawLayerGPU(RSDK::TileLayer *layer)
+{
+#ifdef PBKIT_NO_GPU_SPRITES
+    return false;
+#endif
+    if (!PBSpriteOffloadOK())
+        return false;
+    // A custom scanline callback (rotozoom/Mode-7 effects) fills scanlines[] with arbitrary
+    // non-linear per-scanline positions our banded/linear HScroll path can't represent, and
+    // the special stage's layers garble regardless — keep both on the software path.
+    if (layer->scanlineCallback || PBInSpecialStage())
+        return false;
+    // Rebuild the tileset atlas when the scene changes (cheap key check per call).
+    int32 key = ((int32)sceneInfo.activeCategory << 16) | ((int32)sceneInfo.listPos & 0xFFFF);
+    if (key != tileAtlasSceneKey) {
+        BuildTilesetAtlas();
+        tileAtlasSceneKey = key;
+    }
+    switch (layer->type) {
+        case LAYER_HSCROLL: return DrawLayerHScrollGPU(layer);
+        default: return false; // VScroll / Rotozoom / Basic -> software (for now)
+    }
 }
 
 // Real paletted-quad path (Stage 2): draw an unscaled sprite as an I8 textured GPU quad

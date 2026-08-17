@@ -19,6 +19,8 @@
 
 using ShaderEntry = ShaderEntryBase;
 
+struct TileLayer; // defined later in Scene.hpp; used by DrawLayerGPU below (pointer only)
+
 class RenderDevice : public RenderDeviceBase
 {
 public:
@@ -89,6 +91,8 @@ public:
     static bool DrawRectangleGPU(int32 x, int32 y, int32 width, int32 height, uint32 color, int32 alpha, int32 inkEffect);
     static bool DrawFaceGPU(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect);
     static bool DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect);
+    // Tile layers as GPU quads (Stage 4). Return true = handled (else software fallback).
+    static bool DrawLayerGPU(TileLayer *layer);
 
 private:
     static bool SetupRendering();
