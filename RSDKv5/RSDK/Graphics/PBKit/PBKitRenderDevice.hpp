@@ -93,6 +93,8 @@ public:
     static bool DrawFillScreenGPU(uint32 color, int32 alphaR, int32 alphaG, int32 alphaB);
     static bool DrawFaceGPU(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect);
     static bool DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect);
+    // Re-upload animated tiles (DrawAniTile) into the GPU tileset atlas so they animate.
+    static void UpdateAniTileGPU(int32 tileIndex, int32 cnt);
     // Tile layers as GPU quads (Stage 4). Return true = handled (else software fallback).
     static bool DrawLayerGPU(TileLayer *layer);
     // Rotozoom (Mode-7) floor as GPU strip quads (Stage 5). Return true = handled.

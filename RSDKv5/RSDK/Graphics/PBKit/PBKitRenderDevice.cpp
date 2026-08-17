@@ -407,6 +407,42 @@ void BuildTilesetAtlas()
     free(tmp);
 }
 
+// Swizzled base (byte offset) of a 16-aligned tile at atlas grid (col,row). The NV2A swizzle
+// of a square texture interleaves X into the even address bits and Y into the odd bits (the
+// generate_swizzle_masks "yxyx" pattern in swizzle.c); a 16x16 tile therefore occupies one
+// contiguous 256-byte Morton block at interleave(col,row) << 8 — matching what BuildTilesetAtlas
+// wrote for that tile, so a single tile can be re-swizzled in place.
+static inline uint32 TileSwizzleBase(uint32 col, uint32 row)
+{
+    uint32 m = 0;
+    for (uint32 b = 0; b < 6; ++b) {
+        m |= ((col >> b) & 1u) << (2 * b);
+        m |= ((row >> b) & 1u) << (2 * b + 1);
+    }
+    return m << 8;
+}
+
+// Re-upload animated tiles into the GPU atlas. DrawAniTile rewrites tilesetPixels for `cnt`
+// consecutive tiles plus their three pre-flipped copies (at +FLIP_*·TILESET_SIZE); the atlas
+// was built once, so without this the tiles (waterfalls, conveyors, lava) freeze on the GPU.
+// Re-swizzle just those tiles' 16x16 blocks — cheap (a handful of 256-byte blocks per frame).
+// (Free function in the anon namespace; RenderDevice::UpdateAniTileGPU below forwards to it.)
+void UpdateAniTileAtlas(int32 tileIndex, int32 cnt)
+{
+    if (!tileAtlasData || cnt <= 0)
+        return;
+    for (int32 f = 0; f < 4; ++f) {
+        for (int32 t = 0; t < cnt; ++t) {
+            int32 ti = tileIndex + t + f * TILE_COUNT; // base + flip block (0..4095)
+            if (ti < 0 || ti >= TILE_ATLAS_COLS * TILE_ATLAS_COLS)
+                continue;
+            uint8 *src   = &tilesetPixels[ti * TILE_DATASIZE]; // linear 16x16
+            uint32 base  = TileSwizzleBase((uint32)(ti % TILE_ATLAS_COLS), (uint32)(ti / TILE_ATLAS_COLS));
+            swizzle_rect(src, TILE_SIZE, TILE_SIZE, tileAtlasData + base, TILE_SIZE, 1);
+        }
+    }
+}
+
 // One HScroll tile layer as GPU quads. Screen scanlines are grouped into constant-X bands
 // (parallax); each band's visible tiles draw clipped (scissor) to its screen-Y range. Many
 // bands (per-scanline deform / water) -> bail to software.
@@ -1794,6 +1830,8 @@ bool RenderDevice::DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 v
     }
     return false;
 }
+
+void RenderDevice::UpdateAniTileGPU(int32 tileIndex, int32 cnt) { UpdateAniTileAtlas(tileIndex, cnt); }
 
 bool RenderDevice::DrawLayerGPU(RSDK::TileLayer *layer)
 {
