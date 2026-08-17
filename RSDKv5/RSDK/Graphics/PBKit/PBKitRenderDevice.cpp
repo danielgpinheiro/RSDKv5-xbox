@@ -187,6 +187,11 @@ struct SprBatch {
     // Scissor in back-buffer pixels (tile-layer strips clip to their scanline band). A
     // full-screen clip means "no clip"; -1 width = unset (use full screen).
     int32 clipX, clipY, clipW, clipH;
+    // Per-channel constant blend color (ARGB) for FillScreen fades: when sfactor is
+    // XGU_FACTOR_CONSTANT_COLOR the flush pushes this via NV097_SET_BLEND_COLOR so the
+    // R/G/B channels each blend by their own alpha. 0 on every normal batch (zero-filled
+    // by the 12-field aggregate initializers, which is why it lives last).
+    uint32 blendColor;
 };
 SprBatch sprBatches[MAX_SPR_BATCHES];
 int32 sprBatchCount = 0;
@@ -639,6 +644,12 @@ void FlushSpriteBatches()
         }
 
         p = pb_begin();
+        // FillScreen fade batches use a per-channel constant blend (src*C + dst*(1-C),
+        // C = the R/G/B fade alphas); push the constant before the func.
+        if (b->sfactor == XGU_FACTOR_CONSTANT_COLOR) {
+            pb_push1(p, NV097_SET_BLEND_COLOR, b->blendColor);
+            p += 2;
+        }
         p = xgu_set_blend_func_sfactor(p, b->sfactor);
         p = xgu_set_blend_func_dfactor(p, b->dfactor);
         if (isTextured != lastTextured) {
@@ -1573,6 +1584,59 @@ bool RenderDevice::DrawRectangleGPU(int32 x, int32 y, int32 width, int32 height,
         return true;
     }
     return false;
+}
+
+// FillScreen: a fullscreen per-channel alpha fade of `color` over everything drawn so far
+// — Mania's zone transition fade (Zone.c: RSDK.FillScreen(fadeColor, timer, timer-128,
+// timer-256)). The software version blends the whole framebuffer; on the GPU the fill was
+// landing in the (background) framebuffer *under* the GPU sprite/tile stream, so the fade
+// never appeared over gameplay. Emit it as one fullscreen quad in the batch stream (so it
+// composites in draw order, over prior GPU content) with a per-channel CONSTANT_COLOR blend:
+// result_c = color_c*(a_c/255) + dst_c*(1 - a_c/255) — exactly the software LERP, the three
+// alphas pushed via NV097_SET_BLEND_COLOR at flush.
+bool RenderDevice::DrawFillScreenGPU(uint32 color, int32 alphaR, int32 alphaG, int32 alphaB)
+{
+    if (!PBSpriteOffloadOK())
+        return false;
+    alphaR = alphaR < 0 ? 0 : (alphaR > 0xFF ? 0xFF : alphaR);
+    alphaG = alphaG < 0 ? 0 : (alphaG > 0xFF ? 0xFF : alphaG);
+    alphaB = alphaB < 0 ? 0 : (alphaB > 0xFF ? 0xFF : alphaB);
+    if (!(alphaR + alphaG + alphaB))
+        return true; // nothing to blend, but handled (don't also run the software fill)
+    if (!sprVerts || sprVertCount + 6 > MAX_SPR_VERTS || sprBatchCount >= MAX_SPR_BATCHES)
+        return false;
+
+    // Fullscreen quad in back-buffer pixels — bypasses the current clip, like software
+    // FillScreen which writes the entire framebuffer. dim modulates the fade color so the
+    // screensaver dim applies consistently with the rest of the GPU frame.
+    const float bw = (float)pb_back_buffer_width(), bh = (float)pb_back_buffer_height();
+    const float dim = PBDim();
+    const uint8 cr = (uint8)(((color >> 16) & 0xFF) * dim);
+    const uint8 cg = (uint8)(((color >> 8) & 0xFF) * dim);
+    const uint8 cb = (uint8)((color & 0xFF) * dim);
+    const float px[4]    = { 0.0f, bw, 0.0f, bw };
+    const float py[4]    = { 0.0f, 0.0f, bh, bh };
+    const int32 order[6] = { 0, 1, 2, 1, 3, 2 };
+    int32 start          = sprVertCount;
+    for (int32 i = 0; i < 6; ++i) {
+        int32 c     = order[i];
+        PBVertex *v = &sprVerts[sprVertCount++];
+        v->pos[0]   = px[c];
+        v->pos[1]   = py[c];
+        v->color[0] = cr;
+        v->color[1] = cg;
+        v->color[2] = cb;
+        v->color[3] = 0xFF;
+        v->tex[0]   = 0.0f;
+        v->tex[1]   = 0.0f;
+    }
+    // Untextured, full-screen clip (clipW<0), per-channel constant blend. Always its own
+    // batch (never coalesced — the blend constant is unique to this fill).
+    uint32 blendColor = 0xFF000000u | ((uint32)alphaR << 16) | ((uint32)alphaG << 8) | (uint32)alphaB;
+    sprBatches[sprBatchCount++] = { start,        6,  nullptr, 0, 0, 0, XGU_FACTOR_CONSTANT_COLOR, XGU_FACTOR_ONE_MINUS_CONSTANT_COLOR,
+                                    0,            0,  -1,      -1, blendColor };
+    validDraw                   = true;
+    return true;
 }
 
 bool RenderDevice::DrawFaceGPU(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect)

@@ -593,6 +593,15 @@ void RSDK::FillScreen(uint32 color, int32 alphaR, int32 alphaG, int32 alphaB)
     alphaG = CLAMP(alphaG, 0x00, 0xFF);
     alphaB = CLAMP(alphaB, 0x00, 0xFF);
 
+#if RETRO_RENDERDEVICE_PBKIT
+    // GPU offload: the zone transition fade (Zone.c) is a fullscreen FillScreen; on the GPU
+    // it must composite over the sprite/tile stream in draw order, not into the background
+    // framebuffer (where it was invisible under GPU content). Falls back to software when the
+    // GPU path is gated off (menus/overlays/non-REGULAR).
+    if (RenderDevice::DrawFillScreenGPU(color, alphaR, alphaG, alphaB))
+        return;
+#endif
+
     if (alphaR + alphaG + alphaB) {
         validDraw        = true;
         uint16 clrBlendR = blendLookupTable[0x20 * alphaR + rgb32To16_B[(color >> 0x10) & 0xFF]];

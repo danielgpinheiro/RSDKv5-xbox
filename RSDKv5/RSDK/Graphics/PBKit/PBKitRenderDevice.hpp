@@ -89,6 +89,8 @@ public:
                                      int32 inkEffect, int32 alpha);
     // 2D primitives as untextured colored GPU polys (Stage 3). Return true = handled.
     static bool DrawRectangleGPU(int32 x, int32 y, int32 width, int32 height, uint32 color, int32 alpha, int32 inkEffect);
+    // Fullscreen per-channel alpha fade (Mania zone transition; Zone.c FillScreen). Handled = true.
+    static bool DrawFillScreenGPU(uint32 color, int32 alphaR, int32 alphaG, int32 alphaB);
     static bool DrawFaceGPU(Vector2 *vertices, int32 vertCount, int32 r, int32 g, int32 b, int32 alpha, int32 inkEffect);
     static bool DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect);
     // Tile layers as GPU quads (Stage 4). Return true = handled (else software fallback).
