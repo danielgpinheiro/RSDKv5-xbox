@@ -485,6 +485,126 @@ bool DrawLayerHScrollGPU(TileLayer *layer)
     return true;
 }
 
+// Emit a rectangular run of atlas tiles for a constant-scroll region. At screen pixel
+// (originX,originY) the layer samples layer-space pixel (srcX,srcY); tiles then tile the
+// region [originX,clipRight) x [originY,clipBottom) with wrap. All tiles use `bank`
+// (Basic/VScroll select a single bank; the HScroll path picks per-scanline itself). The
+// caller sets the scissor (curClip*) so partial edge tiles are clipped.
+static void EmitTileGridRegion(TileLayer *layer, int32 srcX, int32 srcY, int32 originX, int32 originY, int32 clipRight, int32 clipBottom,
+                               int32 bank, float sx, float sy)
+{
+    PBSurfTex atlas;
+    atlas.phys       = tileAtlasPhys;
+    atlas.texW       = TILE_ATLAS_DIM;
+    atlas.texH       = TILE_ATLAS_DIM;
+    const float hu   = 0.5f / TILE_ATLAS_DIM; // half-texel inset (avoid atlas bleed)
+    int32 pixelW     = TILE_SIZE * layer->xsize, pixelH = TILE_SIZE * layer->ysize;
+    srcX %= pixelW;
+    if (srcX < 0)
+        srcX += pixelW;
+    srcY %= pixelH;
+    if (srcY < 0)
+        srcY += pixelH;
+    int32 subX = srcX & 0xF, subY = srcY & 0xF;
+    int32 tx0 = srcX >> 4, ty0 = srcY >> 4;
+    bank &= (PALETTE_BANK_COUNT - 1);
+    int32 colI = 0;
+    for (int32 screenX = originX - subX; screenX < clipRight; screenX += TILE_SIZE, ++colI) {
+        int32 tx = (tx0 + colI) % layer->xsize;
+        if (tx < 0)
+            tx += layer->xsize;
+        int32 rowI = 0;
+        for (int32 screenY = originY - subY; screenY < clipBottom; screenY += TILE_SIZE, ++rowI) {
+            int32 ty = (ty0 + rowI) % layer->ysize;
+            if (ty < 0)
+                ty += layer->ysize;
+            uint16 entry = layer->layout[tx + (ty << layer->widthShift)];
+            if (entry >= 0xFFFF)
+                continue;
+            int32 idx = entry & 0xFFF;
+            int32 gx  = (idx % TILE_ATLAS_COLS) * TILE_SIZE, gy = (idx / TILE_ATLAS_COLS) * TILE_SIZE;
+            float u0  = (float)gx / TILE_ATLAS_DIM + hu, u1 = (float)(gx + TILE_SIZE) / TILE_ATLAS_DIM - hu;
+            float v0  = (float)gy / TILE_ATLAS_DIM + hu, v1 = (float)(gy + TILE_SIZE) / TILE_ATLAS_DIM - hu;
+            EmitSpriteQuad(&atlas, bank, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, 1.0f, screenX * sx, screenY * sy,
+                           (screenX + TILE_SIZE) * sx, (screenY + TILE_SIZE) * sy, u0, v0, u1, v1);
+        }
+    }
+}
+
+// One Basic tile layer: a single uniform scroll over the whole clip rect, palette bank 0
+// (matching the software DrawLayerBasic, which hardcodes fullPalette[0]).
+bool DrawLayerBasicGPU(TileLayer *layer)
+{
+    if (!layer->xsize || !layer->ysize)
+        return true;
+    if (!tileAtlasData)
+        return false;
+    int32 cX1 = currentScreen->clipBound_X1, cX2 = currentScreen->clipBound_X2;
+    int32 cY1 = currentScreen->clipBound_Y1, cY2 = currentScreen->clipBound_Y2;
+    if (cX1 >= cX2 || cY1 >= cY2)
+        return true;
+
+    ScanlineInfo *s = &scanlines[cY1];
+    int32 srcX      = cX1 + FROM_FIXED(s->position.x); // software adds clipBound_X1 to the scroll
+    int32 srcY      = FROM_FIXED(s->position.y);
+    float sx = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth, sy = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+
+    curClipX = (int32)(cX1 * sx);
+    curClipY = (int32)(cY1 * sy);
+    curClipW = (int32)((cX2 - cX1) * sx);
+    curClipH = (int32)((cY2 - cY1) * sy);
+    EmitTileGridRegion(layer, srcX, srcY, cX1, cY1, cX2, cY2, 0, sx, sy);
+    curClipW = -1;
+    return true;
+}
+
+// One VScroll tile layer. Columns carry per-column position (scanlines[] is indexed by X
+// here); position.x increments per column (absolute source X, 1:1), while position.y is the
+// per-column vertical scroll (the parallax). Group columns into constant-position.y bands and
+// draw each band's full-height tile run, scissored to the band's X range. Too many bands
+// (smooth per-column parallax) -> software. Single palette bank = gfxLineBuffer[0] (matching
+// the software path). The column runs the full screen height from y=0 (software ignores
+// clipBound_Y for VScroll).
+bool DrawLayerVScrollGPU(TileLayer *layer)
+{
+    if (!layer->xsize || !layer->ysize)
+        return true;
+    if (!tileAtlasData)
+        return false;
+    int32 cX1 = currentScreen->clipBound_X1, cX2 = currentScreen->clipBound_X2;
+    if (cX1 >= cX2)
+        return true;
+
+    int32 bands = 1;
+    for (int32 x = cX1 + 1; x < cX2; ++x)
+        if (scanlines[x].position.y != scanlines[x - 1].position.y)
+            ++bands;
+    if (bands > 48)
+        return false;
+
+    float sx = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth, sy = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    int32 bank    = gfxLineBuffer[0];
+    int32 fullH   = currentScreen->size.y;
+    int32 cx      = cX1;
+    while (cx < cX2) {
+        int32 bandY = scanlines[cx].position.y;
+        int32 cx0   = cx;
+        while (cx < cX2 && scanlines[cx].position.y == bandY) ++cx;
+        int32 cx1 = cx;
+
+        int32 srcX = FROM_FIXED(scanlines[cx0].position.x); // absolute source X at screen col cx0
+        int32 srcY = FROM_FIXED(bandY);
+
+        curClipX = (int32)(cx0 * sx);
+        curClipY = 0;
+        curClipW = (int32)((cx1 - cx0) * sx);
+        curClipH = pb_back_buffer_height();
+        EmitTileGridRegion(layer, srcX, srcY, cx0, 0, cx1, fullH, bank, sx, sy);
+    }
+    curClipW = -1;
+    return true;
+}
+
 // Compose a rotozoom layer's tilemap into the POT I8 floor texture (swizzled). Returns false
 // if too big (cap) or alloc fails. Rebuilt when the (scene+layer) key changes.
 bool BuildFloorTexture(TileLayer *layer)
@@ -1695,7 +1815,9 @@ bool RenderDevice::DrawLayerGPU(RSDK::TileLayer *layer)
     }
     switch (layer->type) {
         case LAYER_HSCROLL: return DrawLayerHScrollGPU(layer);
-        default: return false; // VScroll / Rotozoom / Basic -> software (for now)
+        case LAYER_VSCROLL: return DrawLayerVScrollGPU(layer);
+        case LAYER_BASIC: return DrawLayerBasicGPU(layer);
+        default: return false; // Rotozoom -> its own DrawLayerRotozoomGPU path
     }
 }
 
