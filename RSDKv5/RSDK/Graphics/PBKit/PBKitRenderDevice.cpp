@@ -1803,8 +1803,12 @@ bool RenderDevice::DrawLayerGPU(RSDK::TileLayer *layer)
     if (!PBSpriteOffloadOK())
         return false;
     // A custom scanline callback (rotozoom/Mode-7 effects) fills scanlines[] with arbitrary
-    // non-linear per-scanline positions our banded/linear HScroll path can't represent, and
-    // the special stage's layers garble regardless — keep both on the software path.
+    // non-linear per-scanline positions our banded/linear tile path can't represent — software.
+    //
+    // The special stage's *background* tile layers additionally garble on the GPU atlas path
+    // (only the tile layers — sprites are correct — pointing at a stale/mismatched tileset
+    // atlas for that scene, not the band logic). Keep the whole special stage on software until
+    // the atlas issue is debugged during the framebuffer-retire step (S6.7).
     if (layer->scanlineCallback || PBInSpecialStage())
         return false;
     // Rebuild the tileset atlas when the scene changes (cheap key check per call).
