@@ -93,6 +93,8 @@ public:
     static bool DrawBlendedFaceGPU(Vector2 *vertices, uint32 *colors, int32 vertCount, int32 alpha, int32 inkEffect);
     // Tile layers as GPU quads (Stage 4). Return true = handled (else software fallback).
     static bool DrawLayerGPU(TileLayer *layer);
+    // Rotozoom (Mode-7) floor as GPU strip quads (Stage 5). Return true = handled.
+    static bool DrawLayerRotozoomGPU(TileLayer *layer);
 
 private:
     static bool SetupRendering();

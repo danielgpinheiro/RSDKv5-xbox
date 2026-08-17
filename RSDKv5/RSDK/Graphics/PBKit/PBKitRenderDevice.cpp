@@ -275,6 +275,43 @@ bool EmitSpriteQuad(PBSurfTex *t, int32 bank, XguBlendFactor sf, XguBlendFactor 
     return EmitSpriteQuadCorners(t, bank, sf, df, a, px, py, u0, v0, u1, v1);
 }
 
+// Textured quad with fully independent per-corner UVs (Mode-7 floor strips) and an explicit
+// texture (not a PBSurfTex). `bankWrap` low 3 bits = palette bank; bit 8 (0x100) = WRAP address.
+// Corner order TL,TR,BL,BR. Vertex color = white * dim.
+bool EmitTexQuadUV(uint8 *texPhys, int32 texW, int32 texH, int32 bankWrap, XguBlendFactor sf, XguBlendFactor df, float dim, const float px[4],
+                   const float py[4], const float cu[4], const float cv[4])
+{
+    if (!sprVerts || sprVertCount + 6 > MAX_SPR_VERTS)
+        return false;
+    bool coalesce = sprBatchCount > 0 && sprBatches[sprBatchCount - 1].texPhys == texPhys && sprBatches[sprBatchCount - 1].bank == bankWrap
+                    && sprBatches[sprBatchCount - 1].sfactor == sf && sprBatches[sprBatchCount - 1].dfactor == df
+                    && BatchClipMatches(sprBatches[sprBatchCount - 1])
+                    && sprBatches[sprBatchCount - 1].start + sprBatches[sprBatchCount - 1].count == sprVertCount;
+    if (!coalesce && sprBatchCount >= MAX_SPR_BATCHES)
+        return false;
+
+    uint8 lum            = (uint8)(255.0f * dim);
+    const int32 order[6] = { 0, 1, 2, 1, 3, 2 };
+    int32 start          = sprVertCount;
+    for (int32 i = 0; i < 6; ++i) {
+        int32 c     = order[i];
+        PBVertex *v = &sprVerts[sprVertCount++];
+        v->pos[0]   = px[c];
+        v->pos[1]   = py[c];
+        v->color[0] = lum;
+        v->color[1] = lum;
+        v->color[2] = lum;
+        v->color[3] = 0xFF;
+        v->tex[0]   = cu[c];
+        v->tex[1]   = cv[c];
+    }
+    if (coalesce)
+        sprBatches[sprBatchCount - 1].count += 6;
+    else
+        sprBatches[sprBatchCount++] = { start, 6, texPhys, texW, texH, bankWrap, sf, df, curClipX, curClipY, curClipW, curClipH };
+    return true;
+}
+
 // Append an UNTEXTURED colored polygon (fan-triangulated), coalescing with the previous
 // untextured batch of the same blend. Vertices are in 16.16 fixed-point logical pixels
 // (Scene3D face coords); per-vertex RGB from colors[], alpha shared. Same ordered list as
@@ -329,6 +366,13 @@ bool EmitColoredPoly(RSDK::Vector2 *vertices, uint32 *colors, int32 vertCount, u
 #define TILE_ATLAS_COLS (64)
 uint8 *tileAtlasData = nullptr, *tileAtlasPhys = nullptr;
 int32 tileAtlasSceneKey = -1;
+
+// Mode-7 floor (Stage 5): the rotozoom layer's tilemap composed into one POT I8 texture,
+// WRAP-addressed + swizzled, so per-scanline strip quads can sample across tiles. Rebuilt
+// per (scene + layer); capped to protect the 64MB budget.
+#define FLOOR_TEX_MAX (1024)
+uint8 *floorTexData = nullptr, *floorTexPhys = nullptr;
+int32 floorW = 0, floorH = 0, floorKey = -1;
 
 void BuildTilesetAtlas()
 {
@@ -430,6 +474,77 @@ bool DrawLayerHScrollGPU(TileLayer *layer)
     return true;
 }
 
+// Compose a rotozoom layer's tilemap into the POT I8 floor texture (swizzled). Returns false
+// if too big (cap) or alloc fails. Rebuilt when the (scene+layer) key changes.
+bool BuildFloorTexture(TileLayer *layer)
+{
+    int32 fw = TILE_SIZE << layer->widthShift, fh = TILE_SIZE << layer->heightShift;
+    if (fw > FLOOR_TEX_MAX || fh > FLOOR_TEX_MAX)
+        return false;
+
+    if (floorTexData && (floorW != fw || floorH != fh)) {
+        MmFreeContiguousMemory(floorTexData);
+        floorTexData = nullptr;
+    }
+    if (!floorTexData) {
+        floorTexData = (uint8 *)MmAllocateContiguousMemoryEx((SIZE_T)fw * fh, 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+        if (!floorTexData)
+            return false;
+        floorTexPhys = (uint8 *)MmGetPhysicalAddress(floorTexData);
+    }
+    floorW = fw;
+    floorH = fh;
+
+    uint8 *tmp = (uint8 *)malloc((size_t)fw * fh);
+    if (!tmp)
+        return false;
+    int32 tilesX = 1 << layer->widthShift, tilesY = 1 << layer->heightShift;
+    for (int32 ty = 0; ty < tilesY; ++ty) {
+        for (int32 tx = 0; tx < tilesX; ++tx) {
+            uint16 entry = layer->layout[tx + (ty << layer->widthShift)] & 0xFFF;
+            uint8 *src   = &tilesetPixels[entry * TILE_DATASIZE];
+            for (int32 row = 0; row < TILE_SIZE; ++row) memcpy(&tmp[(ty * TILE_SIZE + row) * fw + tx * TILE_SIZE], &src[row * TILE_SIZE], TILE_SIZE);
+        }
+    }
+    swizzle_rect(tmp, fw, fh, floorTexData, fw, 1);
+    free(tmp);
+    return true;
+}
+
+// One rotozoom (Mode-7) floor as GPU quads: a 1px-tall strip per scanline, UV interpolated
+// linearly from the scanline's affine params (posX/Y stepped by deform.x/.y per pixel). WRAP
+// addressing repeats the tilemap. Reproduces DrawLayerRotozoom's per-pixel affine walk.
+bool RotozoomLayerToGPU(TileLayer *layer)
+{
+    if (!layer->xsize || !layer->ysize)
+        return true;
+    if (!floorTexData || floorW <= 0)
+        return false;
+
+    float sx       = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy       = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    int32 clipX1   = currentScreen->clipBound_X1, clipX2 = currentScreen->clipBound_X2;
+    int32 clipY1   = currentScreen->clipBound_Y1, clipY2 = currentScreen->clipBound_Y2;
+    int32 lineSize = clipX2 - clipX1;
+    float dim      = PBDim();
+    float invW = 1.0f / (65536.0f * floorW), invH = 1.0f / (65536.0f * floorH);
+
+    for (int32 cy = clipY1; cy < clipY2; ++cy) {
+        ScanlineInfo *sl = &scanlines[cy];
+        int32 bank       = gfxLineBuffer[cy] & (PALETTE_BANK_COUNT - 1);
+        float u0 = (float)sl->position.x * invW, v0 = (float)sl->position.y * invH;
+        float u1 = ((float)sl->position.x + (float)lineSize * sl->deform.x) * invW;
+        float v1 = ((float)sl->position.y + (float)lineSize * sl->deform.y) * invH;
+
+        float px[4] = { clipX1 * sx, clipX2 * sx, clipX1 * sx, clipX2 * sx };
+        float py[4] = { cy * sy, cy * sy, (cy + 1) * sy, (cy + 1) * sy };
+        float cu[4] = { u0, u1, u0, u1 };
+        float cv[4] = { v0, v1, v0, v1 };
+        EmitTexQuadUV(floorTexPhys, floorW, floorH, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, px, py, cu, cv);
+    }
+    return true;
+}
+
 // Draw the accumulated GPU 2D batches over the presented framebuffer, in draw order
 // (called in FlipScreen). A batch with texPhys != NULL is an I8 paletted sprite; texPhys
 // == NULL is an untextured colored poly (Scene3D faces / 2D primitives).
@@ -471,11 +586,15 @@ void FlushSpriteBatches()
             p = xgu_set_texture_control0(p, 0, true, 0, 0);
             p = xgu_set_texture_control1(p, 0, b->texW);
             p = xgu_set_texture_image_rect(p, 0, b->texW, b->texH);
+            // bank low 3 bits = palette bank; bit 8 = WRAP address (Mode-7 floor repeat).
+            int32 realBank = b->bank & 7;
+            bool wrap      = (b->bank & 0x100) != 0;
             // Select the palette bank: byte offset bank*256*4 into the CLUT, passed >>6.
-            p = xgu_set_texture_palette(p, 0, true, XGU_PALETTE_LENGTH_256, (void *)(((uint32_t)pbClutPhys + (uint32_t)b->bank * 256u * 4u) >> 6));
+            p = xgu_set_texture_palette(p, 0, true, XGU_PALETTE_LENGTH_256, (void *)(((uint32_t)pbClutPhys + (uint32_t)realBank * 256u * 4u) >> 6));
             p = xgu_set_texture_filter(p, 0, 0, XGU_TEXTURE_CONVOLUTION_GAUSSIAN, XGU_TEXTURE_FILTER_NEAREST, XGU_TEXTURE_FILTER_NEAREST, false, false,
                                        false, false);
-            p = xgu_set_texture_address(p, 0, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, XGU_CLAMP_TO_EDGE, false, false);
+            XguTextureAddress addr = wrap ? XGU_WRAP : XGU_CLAMP_TO_EDGE;
+            p = xgu_set_texture_address(p, 0, addr, wrap, addr, wrap, XGU_CLAMP_TO_EDGE, false, false);
         }
         pb_end(p);
 
@@ -944,6 +1063,13 @@ void RenderDevice::Release(bool32 isRefresh)
             tileAtlasPhys     = nullptr;
             tileAtlasSceneKey = -1;
         }
+        if (floorTexData) {
+            MmFreeContiguousMemory(floorTexData);
+            floorTexData = nullptr;
+            floorTexPhys = nullptr;
+            floorW = floorH = 0;
+            floorKey        = -1;
+        }
         if (displayInfo.displays)
             free(displayInfo.displays);
         displayInfo.displays = nullptr;
@@ -1406,6 +1532,27 @@ bool RenderDevice::DrawLayerGPU(RSDK::TileLayer *layer)
         case LAYER_HSCROLL: return DrawLayerHScrollGPU(layer);
         default: return false; // VScroll / Rotozoom / Basic -> software (for now)
     }
+}
+
+bool RenderDevice::DrawLayerRotozoomGPU(TileLayer *layer)
+{
+#ifdef PBKIT_NO_GPU_SPRITES
+    return false;
+#endif
+    // NOTE: unlike the HScroll tile path, this DOES run for the special stage (its Mode-7
+    // floor is the whole point) — the special stage is ENGINESTATE_REGULAR.
+    if (!PBSpriteOffloadOK())
+        return false;
+    // Compose the floor texture when the (scene + layer slot) changes; bail if too big.
+    int32 key = ((int32)sceneInfo.activeCategory << 20) | (((int32)sceneInfo.listPos & 0xFFFF) << 4) | (int32)(layer - tileLayers);
+    if (key != floorKey) {
+        floorKey = key;
+        if (!BuildFloorTexture(layer)) {
+            floorW = 0; // mark unavailable -> software for this layer
+            return false;
+        }
+    }
+    return RotozoomLayerToGPU(layer);
 }
 
 // Real paletted-quad path (Stage 2): draw an unscaled sprite as an I8 textured GPU quad

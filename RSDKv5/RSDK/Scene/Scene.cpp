@@ -1612,6 +1612,12 @@ void RSDK::DrawLayerRotozoom(TileLayer *layer)
     if (!layer->xsize || !layer->ysize)
         return;
 
+#if RETRO_RENDERDEVICE_PBKIT
+    // GPU offload (Tier 1 Stage 5): draw the Mode-7 floor as per-scanline strip quads.
+    if (RenderDevice::DrawLayerRotozoomGPU(layer))
+        return;
+#endif
+
     uint16 *layout         = layer->layout;
     uint8 *lineBuffer      = &gfxLineBuffer[currentScreen->clipBound_Y1];
     ScanlineInfo *scanline = &scanlines[currentScreen->clipBound_Y1];
