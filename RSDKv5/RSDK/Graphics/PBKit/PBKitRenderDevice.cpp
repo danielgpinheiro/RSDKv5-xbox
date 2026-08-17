@@ -444,9 +444,11 @@ void UpdateAniTileAtlas(int32 tileIndex, int32 cnt)
     }
 }
 
+bool DrawLayerHScrollStripGPU(TileLayer *layer); // defined below; used for high-parallax layers
+
 // One HScroll tile layer as GPU quads. Screen scanlines are grouped into constant-X bands
 // (parallax); each band's visible tiles draw clipped (scissor) to its screen-Y range. Many
-// bands (per-scanline deform / water) -> bail to software.
+// bands (per-scanline parallax) -> per-scanline composed-layer strips (or software if too big).
 bool DrawLayerHScrollGPU(TileLayer *layer)
 {
     if (!layer->xsize || !layer->ysize)
@@ -457,13 +459,15 @@ bool DrawLayerHScrollGPU(TileLayer *layer)
     int32 clipY1 = currentScreen->clipBound_Y1, clipY2 = currentScreen->clipBound_Y2;
     int32 clipX2 = currentScreen->clipBound_X2;
 
-    // Pre-scan: count constant-X bands; too many means per-scanline deform -> software.
+    // Pre-scan: count constant-X bands. Few bands -> the cheap per-tile band path below. Many
+    // bands = per-scanline parallax; render those as composed-layer strips (S6.7), falling back
+    // to software only if the layer is too big to compose.
     int32 bands = 1;
     for (int32 y = clipY1 + 1; y < clipY2; ++y)
         if (scanlines[y].position.x != scanlines[y - 1].position.x)
             ++bands;
     if (bands > 48)
-        return false;
+        return DrawLayerHScrollStripGPU(layer);
 
     PBSurfTex atlas;
     atlas.phys = tileAtlasPhys;
@@ -753,6 +757,107 @@ bool DrawDeformedSpriteToGPU(int32 sheetID, int32 inkEffect, int32 alpha)
         EmitTexQuadUV(t->phys, t->texW, t->texH, bank | 0x100, sf, df, dim, a8, px, py, cu, cv);
     }
     validDraw = true;
+    return true;
+}
+
+// --- parallax background strips (S6.7) ---------------------------------------
+// A high-parallax HScroll layer has a different scroll on (almost) every scanline — hundreds of
+// constant-X bands, too many for the per-tile band path (it bailed those to software). Render
+// them like the Mode-7 floor instead: compose the whole layer tilemap into one POT I8 texture
+// (WRAP-addressed + swizzled, cached per scene+layer) and draw one 1px strip per scanline whose
+// UV is that scanline's scroll (position.x, position.y) — exactly the per-scanline sample the
+// software does, at ~one quad per scanline. Layers too large to compose fall back to software
+// (the wide foreground playfield stays on the cheap band path, which handles it as one band).
+#define BG_TEX_MAX   (2048)
+#define BG_TEX_CACHE (4)
+struct BgLayerTex {
+    uint8 *data = nullptr, *phys = nullptr;
+    int32 w = 0, h = 0;
+    int32 key = -1;
+};
+BgLayerTex bgTexCache[BG_TEX_CACHE];
+int32 bgTexNext = 0;
+
+// Compose (or fetch cached) the layer's tilemap as a swizzled I8 texture. Null = too big/failed.
+BgLayerTex *GetComposedLayerTex(TileLayer *layer)
+{
+    int32 key = ((int32)sceneInfo.activeCategory << 20) | (((int32)sceneInfo.listPos & 0xFFFF) << 4) | (int32)(layer - tileLayers);
+    for (int32 i = 0; i < BG_TEX_CACHE; ++i)
+        if (bgTexCache[i].data && bgTexCache[i].key == key)
+            return &bgTexCache[i];
+
+    int32 w = TILE_SIZE << layer->widthShift, h = TILE_SIZE << layer->heightShift;
+    if (w > BG_TEX_MAX || h > BG_TEX_MAX)
+        return nullptr; // too big to compose -> software band/scanline path
+
+    BgLayerTex *slot = &bgTexCache[bgTexNext];
+    bgTexNext        = (bgTexNext + 1) % BG_TEX_CACHE;
+    if (slot->data && (slot->w != w || slot->h != h)) {
+        MmFreeContiguousMemory(slot->data);
+        slot->data = nullptr;
+    }
+    if (!slot->data) {
+        slot->data = (uint8 *)MmAllocateContiguousMemoryEx((SIZE_T)w * h, 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+        if (!slot->data)
+            return nullptr;
+        slot->phys = (uint8 *)MmGetPhysicalAddress(slot->data);
+    }
+    slot->w   = w;
+    slot->h   = h;
+    slot->key = key;
+
+    uint8 *tmp = (uint8 *)malloc((size_t)w * h);
+    if (!tmp) {
+        slot->key = -1; // leave the buffer for reuse, but mark uncomposed
+        return nullptr;
+    }
+    int32 tilesX = 1 << layer->widthShift, tilesY = 1 << layer->heightShift;
+    for (int32 ty = 0; ty < tilesY; ++ty) {
+        for (int32 tx = 0; tx < tilesX; ++tx) {
+            uint16 entry = layer->layout[tx + (ty << layer->widthShift)];
+            uint8 *dst   = &tmp[(ty * TILE_SIZE) * w + tx * TILE_SIZE];
+            if (entry >= 0xFFFF) { // empty tile -> transparent (index 0), like the software skip
+                for (int32 row = 0; row < TILE_SIZE; ++row) memset(&dst[row * w], 0, TILE_SIZE);
+            }
+            else {
+                uint8 *src = &tilesetPixels[(entry & 0xFFF) * TILE_DATASIZE]; // low 12 bits pick the pre-flipped copy
+                for (int32 row = 0; row < TILE_SIZE; ++row) memcpy(&dst[row * w], &src[row * TILE_SIZE], TILE_SIZE);
+            }
+        }
+    }
+    swizzle_rect(tmp, w, h, slot->data, w, 1);
+    free(tmp);
+    return slot;
+}
+
+// One HScroll layer as per-scanline strips (arbitrary per-scanline parallax). Each strip samples
+// a single source row (v constant) starting at the scanline's horizontal scroll (u linear), WRAP
+// repeating the tilemap — matching the software per-scanline walk. Returns false (software) if the
+// layer can't be composed.
+bool DrawLayerHScrollStripGPU(TileLayer *layer)
+{
+    BgLayerTex *lt = GetComposedLayerTex(layer);
+    if (!lt)
+        return false;
+    float sx     = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy     = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    int32 clipY1 = currentScreen->clipBound_Y1, clipY2 = currentScreen->clipBound_Y2;
+    int32 width  = currentScreen->size.x; // HScroll draws the full screen width from x=0
+    float dim    = PBDim();
+    float invW = 1.0f / (65536.0f * lt->w), invH = 1.0f / (65536.0f * lt->h);
+    curClipW = -1; // full-screen (strips are bounded by their own Y already)
+    for (int32 cy = clipY1; cy < clipY2; ++cy) {
+        ScanlineInfo *sl = &scanlines[cy];
+        int32 bank       = gfxLineBuffer[cy] & (PALETTE_BANK_COUNT - 1);
+        float u0 = (float)sl->position.x * invW;                          // screen x=0 -> source position.x
+        float u1 = ((float)sl->position.x + (float)(width << 16)) * invW; // +width source pixels
+        float v  = (float)sl->position.y * invH;                          // single source row per scanline
+        float px[4] = { 0.0f, width * sx, 0.0f, width * sx };
+        float py[4] = { cy * sy, cy * sy, (cy + 1) * sy, (cy + 1) * sy };
+        float cu[4] = { u0, u1, u0, u1 };
+        float cv[4] = { v, v, v, v };
+        EmitTexQuadUV(lt->phys, lt->w, lt->h, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, 0xFF, px, py, cu, cv);
+    }
     return true;
 }
 
@@ -1349,6 +1454,14 @@ void RenderDevice::Release(bool32 isRefresh)
             floorTexPhys = nullptr;
             floorW = floorH = 0;
             floorKey        = -1;
+        }
+        for (int32 i = 0; i < BG_TEX_CACHE; ++i) {
+            if (bgTexCache[i].data) {
+                MmFreeContiguousMemory(bgTexCache[i].data);
+                bgTexCache[i].data = nullptr;
+                bgTexCache[i].phys = nullptr;
+                bgTexCache[i].key  = -1;
+            }
         }
         if (imgTexData) {
             MmFreeContiguousMemory(imgTexData);
