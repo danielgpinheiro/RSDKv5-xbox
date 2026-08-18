@@ -445,6 +445,7 @@ void UpdateAniTileAtlas(int32 tileIndex, int32 cnt)
 }
 
 bool DrawLayerHScrollStripGPU(TileLayer *layer); // defined below; used for high-parallax layers
+bool DrawLayerVScrollStripGPU(TileLayer *layer); // defined below; per-column transpose
 
 // One HScroll tile layer as GPU quads. Screen scanlines are grouped into constant-X bands
 // (parallax); each band's visible tiles draw clipped (scissor) to its screen-Y range. Many
@@ -621,7 +622,7 @@ bool DrawLayerVScrollGPU(TileLayer *layer)
         if (scanlines[x].position.y != scanlines[x - 1].position.y)
             ++bands;
     if (bands > 48)
-        return false;
+        return DrawLayerVScrollStripGPU(layer);
 
     float sx = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth, sy = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
     int32 bank    = gfxLineBuffer[0];
@@ -856,6 +857,37 @@ bool DrawLayerHScrollStripGPU(TileLayer *layer)
         float py[4] = { cy * sy, cy * sy, (cy + 1) * sy, (cy + 1) * sy };
         float cu[4] = { u0, u1, u0, u1 };
         float cv[4] = { v, v, v, v };
+        EmitTexQuadUV(lt->phys, lt->w, lt->h, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, 0xFF, px, py, cu, cv);
+    }
+    return true;
+}
+
+// One VScroll layer as per-scanline strips — the per-column transpose of HScroll (scanlines[] is
+// indexed by column). Each strip is a 1px-wide vertical slice at screen column cx, sampling source
+// column position.x (u constant) down from source row position.y (v linear), WRAP-tiled. Single
+// palette bank = gfxLineBuffer[0], full screen height from y=0 (matching the software VScroll).
+bool DrawLayerVScrollStripGPU(TileLayer *layer)
+{
+    BgLayerTex *lt = GetComposedLayerTex(layer);
+    if (!lt)
+        return false;
+    float sx     = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy     = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    int32 clipX1 = currentScreen->clipBound_X1, clipX2 = currentScreen->clipBound_X2;
+    int32 height = currentScreen->size.y; // VScroll draws the full screen height from y=0
+    float dim    = PBDim();
+    int32 bank   = gfxLineBuffer[0] & (PALETTE_BANK_COUNT - 1);
+    float invW = 1.0f / (65536.0f * lt->w), invH = 1.0f / (65536.0f * lt->h);
+    curClipW = -1;
+    for (int32 cx = clipX1; cx < clipX2; ++cx) {
+        ScanlineInfo *sl = &scanlines[cx];
+        float u  = (float)sl->position.x * invW;                            // single source column
+        float v0 = (float)sl->position.y * invH;                           // screen y=0 -> source position.y
+        float v1 = ((float)sl->position.y + (float)(height << 16)) * invH; // +height source rows
+        float px[4] = { cx * sx, (cx + 1) * sx, cx * sx, (cx + 1) * sx };
+        float py[4] = { 0.0f, 0.0f, height * sy, height * sy };
+        float cu[4] = { u, u, u, u };
+        float cv[4] = { v0, v0, v1, v1 };
         EmitTexQuadUV(lt->phys, lt->w, lt->h, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, 0xFF, px, py, cu, cv);
     }
     return true;
