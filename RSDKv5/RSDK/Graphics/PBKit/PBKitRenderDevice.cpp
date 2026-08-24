@@ -457,6 +457,11 @@ bool DrawLayerHScrollGPU(TileLayer *layer)
     if (!tileAtlasData)
         return false;
 
+    // The special stage's background garbles on the per-tile band path (its cause never pinned
+    // down), but the composed-layer strip path renders it correctly — force strips there.
+    if (PBInSpecialStage())
+        return DrawLayerHScrollStripGPU(layer);
+
     int32 clipY1 = currentScreen->clipBound_Y1, clipY2 = currentScreen->clipBound_Y2;
     int32 clipX2 = currentScreen->clipBound_X2;
 
@@ -613,6 +618,9 @@ bool DrawLayerVScrollGPU(TileLayer *layer)
         return true;
     if (!tileAtlasData)
         return false;
+    // Special stage: force the composed-layer strip path (see DrawLayerHScrollGPU).
+    if (PBInSpecialStage())
+        return DrawLayerVScrollStripGPU(layer);
     int32 cX1 = currentScreen->clipBound_X1, cX2 = currentScreen->clipBound_X2;
     if (cX1 >= cX2)
         return true;
@@ -888,6 +896,42 @@ bool DrawLayerVScrollStripGPU(TileLayer *layer)
         float py[4] = { 0.0f, 0.0f, height * sy, height * sy };
         float cu[4] = { u, u, u, u };
         float cv[4] = { v0, v0, v1, v1 };
+        EmitTexQuadUV(lt->phys, lt->w, lt->h, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, 0xFF, px, py, cu, cv);
+    }
+    return true;
+}
+
+// A scanline-callback layer (the special stage's 3D Floor / 3D Roof / Playfield) as per-scanline
+// AFFINE strips — the Mode-7 path, but composing the layer's own tilemap (not the rotozoom
+// floorTex). The callback fills scanlines[] with position + per-pixel deform; each strip
+// interpolates UV from position to position + lineSize*deform, WRAP-tiled. This is what lets the
+// special-stage floor/roof leave the software framebuffer (so the now-GPU background can't hide
+// them). Falls back to software if the layer is too big to compose.
+bool DrawLayerDeformStripGPU(TileLayer *layer)
+{
+    if (!layer->xsize || !layer->ysize)
+        return true;
+    BgLayerTex *lt = GetComposedLayerTex(layer);
+    if (!lt)
+        return false;
+    float sx       = (float)pb_back_buffer_width() / (float)videoSettings.pixWidth;
+    float sy       = (float)pb_back_buffer_height() / (float)SCREEN_YSIZE;
+    int32 clipX1   = currentScreen->clipBound_X1, clipX2 = currentScreen->clipBound_X2;
+    int32 clipY1   = currentScreen->clipBound_Y1, clipY2 = currentScreen->clipBound_Y2;
+    int32 lineSize = clipX2 - clipX1;
+    float dim      = PBDim();
+    float invW = 1.0f / (65536.0f * lt->w), invH = 1.0f / (65536.0f * lt->h);
+    curClipW = -1;
+    for (int32 cy = clipY1; cy < clipY2; ++cy) {
+        ScanlineInfo *sl = &scanlines[cy];
+        int32 bank       = gfxLineBuffer[cy] & (PALETTE_BANK_COUNT - 1);
+        float u0 = (float)sl->position.x * invW, v0 = (float)sl->position.y * invH;
+        float u1 = ((float)sl->position.x + (float)lineSize * sl->deform.x) * invW;
+        float v1 = ((float)sl->position.y + (float)lineSize * sl->deform.y) * invH;
+        float px[4] = { clipX1 * sx, clipX2 * sx, clipX1 * sx, clipX2 * sx };
+        float py[4] = { cy * sy, cy * sy, (cy + 1) * sy, (cy + 1) * sy };
+        float cu[4] = { u0, u1, u0, u1 };
+        float cv[4] = { v0, v1, v0, v1 };
         EmitTexQuadUV(lt->phys, lt->w, lt->h, bank | 0x100, XGU_FACTOR_SRC_ALPHA, XGU_FACTOR_ONE_MINUS_SRC_ALPHA, dim, 0xFF, px, py, cu, cv);
     }
     return true;
@@ -2131,14 +2175,16 @@ bool RenderDevice::DrawLayerGPU(RSDK::TileLayer *layer)
     if (!PBSpriteOffloadOK())
         return false;
     // A custom scanline callback (rotozoom/Mode-7 effects) fills scanlines[] with arbitrary
-    // non-linear per-scanline positions our banded/linear tile path can't represent — software.
-    //
-    // The special stage's *background* tile layers additionally garble on the GPU atlas path
-    // (only the tile layers — sprites are correct — pointing at a stale/mismatched tileset
-    // atlas for that scene, not the band logic). Keep the whole special stage on software until
-    // the atlas issue is debugged during the framebuffer-retire step (S6.7).
-    if (layer->scanlineCallback || PBInSpecialStage())
+    // A custom scanline callback fills scanlines[] with arbitrary per-scanline position + per-pixel
+    // deform. In the special stage those are the Mode-7 3D Floor / 3D Roof / Playfield — render
+    // them as affine deform strips so they leave the framebuffer too (otherwise the now-GPU
+    // background hides the still-software floor). Other stages' callback layers (water, etc.) stay
+    // on software, where they're proven.
+    if (layer->scanlineCallback) {
+        if (PBInSpecialStage())
+            return DrawLayerDeformStripGPU(layer);
         return false;
+    }
     // Rebuild the tileset atlas when the scene changes (cheap key check per call).
     int32 key = ((int32)sceneInfo.activeCategory << 16) | ((int32)sceneInfo.listPos & 0xFFFF);
     if (key != tileAtlasSceneKey) {
