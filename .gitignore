@@ -270,6 +270,7 @@ build/
 bin/
 *.obj
 *.d
+*.map
 loader/**
 .vscode/**
 *.exe
